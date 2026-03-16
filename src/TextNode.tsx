@@ -1,5 +1,5 @@
 import React, { useState, useEffect, memo, useMemo } from 'react';
-import { NodeProps, useConnection } from '@xyflow/react';
+import { NodeProps, useConnection, useReactFlow } from '@xyflow/react';
 import { useTapStore, TapNode } from './store';
 import { useShallow } from 'zustand/react/shallow';
 import { Type, Eye, Edit3, Terminal, Check, X, Loader2 } from 'lucide-react';
@@ -37,6 +37,8 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
     globalDefaults: state.globalDefaults,
     isDemoMode: state.isDemoMode
   })));
+
+  const { setNodes } = useReactFlow();
 
   const viewMode = data.viewMode || 'edit';
   const setViewMode = (mode: ViewMode) => updateNodeData(id, { viewMode: mode });
@@ -149,7 +151,7 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
 
   const handleRun = async () => {
     const activeOutputMode = data.activeOutputMode || 'text';
-    const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
+    const modelKey = data.config?.model || (globalDefaults?.[activeOutputMode as keyof typeof globalDefaults] as string) || '';
     
     let currentModel = null;
     if (modelKey) {
@@ -157,6 +159,14 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
       const p = providers.find(p => p.id === pId);
       const m = p?.models.find(m => m.id === mId);
       if (p && m && p.enabled && m.enabled) currentModel = { provider: p, model: m };
+    }
+
+    // Fallback for demo mode if no model is selected or provider is disabled
+    if (!currentModel && isDemoMode) {
+      currentModel = {
+        provider: { id: 'demo', name: 'Demo Provider', type: 'mock', enabled: true, models: [] },
+        model: { id: 'demo-text-model', name: 'Demo Text Model', enabled: true, capabilities: { text: true } }
+      };
     }
 
     if (!currentModel) {
@@ -177,6 +187,20 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         startTime: runStartTime
       }
     });
+
+    // PREDICTIVE LAYOUT: Increase height to accommodate metadata bar
+    const nodeElement = document.querySelector(`[data-id="${id}"]`) as HTMLElement;
+    if (nodeElement) {
+      const currentHeight = nodeElement.offsetHeight;
+      // If metadata wasn't showing, add 40px (28px bar + 12px gap)
+      const hasMetadataBefore = !!(data.metadata?.modelName || data.metadata?.resolution || data.metadata?.duration);
+      if (!hasMetadataBefore) {
+        setNodes(nds => nds.map(n => n.id === id ? {
+          ...n,
+          style: { ...n.style, height: currentHeight + 40 }
+        } : n));
+      }
+    }
 
     try {
       const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt || '', nodes, edges, id);
@@ -339,9 +363,9 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         </div>
 
       {/* Content */}
-      <div className="p-3 flex flex-col h-[344px]">
+      <div className="p-3 flex-1 min-h-0 flex flex-col gap-3 pb-6">
         <div className={cn(
-          "nodrag nowheel w-full h-full rounded-xl p-3 border flex flex-col overflow-hidden transition-all duration-300 relative",
+          "nodrag nowheel w-full flex-1 rounded-xl p-3 border flex flex-col overflow-hidden transition-all duration-300 relative",
           isGenerated ? "bg-blue-500/[0.03] border-blue-500/20" :
           isPromptActive ? "bg-purple-500/[0.03] border-purple-500/20" :
           viewMode === 'edit' ? "bg-white/[0.05] border-white/10" :

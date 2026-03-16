@@ -128,6 +128,12 @@ export interface NodeData extends Record<string, unknown> {
 
 export type TapNode = Node<NodeData>;
 
+export interface ImageConfig {
+  defaultRatio: string;
+  defaultQuality: string;
+  ratioLayout: string[];
+}
+
 interface TapState {
   nodes: TapNode[];
   edges: Edge[];
@@ -155,7 +161,11 @@ interface TapState {
     text: string; // providerId:modelId
     image: string;
     video: string;
+    imageConfig: ImageConfig;
   };
+  modelOverrides: Record<string, {
+    imageConfig?: ImageConfig;
+  }>;
   isDemoMode: boolean;
   isRecognitionMode: boolean;
   // Multi-selection settings
@@ -169,6 +179,12 @@ interface TapState {
   isShiftPressed: boolean;
   isAltPressed: boolean;
   showMetadata: boolean;
+  autoFocusPrompt: boolean;
+  promptPanelWidth: number;
+  autoExpandOnSelect: boolean;
+  autoExpandText: boolean;
+  autoExpandImage: boolean;
+  autoExpandVideo: boolean;
   setDemoMode: (enabled: boolean) => void;
   setRecognitionMode: (enabled: boolean) => void;
   setMultiSelectMasterEnabled: (enabled: boolean) => void;
@@ -181,11 +197,19 @@ interface TapState {
   setShiftPressed: (enabled: boolean) => void;
   setAltPressed: (enabled: boolean) => void;
   setShowMetadata: (enabled: boolean) => void;
+  setAutoFocusPrompt: (enabled: boolean) => void;
+  setPromptPanelWidth: (width: number) => void;
+  setAutoExpandOnSelect: (enabled: boolean) => void;
+  setAutoExpandText: (enabled: boolean) => void;
+  setAutoExpandImage: (enabled: boolean) => void;
+  setAutoExpandVideo: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
   updateProvider: (id: string, provider: Partial<ProviderConfig>) => void;
   removeProvider: (id: string) => void;
   toggleProvider: (id: string) => void;
   setGlobalDefault: (type: 'text' | 'image' | 'video', modelKey: string) => void;
+  setImageConfig: (config: Partial<ImageConfig>, modelKey?: string) => void;
+  removeModelOverride: (modelKey: string) => void;
   setGlobalMock: (enabled: boolean) => void;
   deleteNodes: (nodes: TapNode[]) => void;
   // User Preferences
@@ -282,7 +306,13 @@ export const useTapStore = create<TapState>()(
         text: 'google-gemini:gemini-3-flash-preview',
         image: 'google-gemini:gemini-2.5-flash-image',
         video: 'google-gemini:veo-3.1-fast-generate-preview',
+        imageConfig: {
+          defaultRatio: '1:1',
+          defaultQuality: '1K',
+          ratioLayout: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5']
+        }
       },
+      modelOverrides: {},
       isDemoMode: true, // Default to true as per user's preference for easy demo
       isRecognitionMode: false,
       isMultiSelectMasterEnabled: true,
@@ -294,6 +324,12 @@ export const useTapStore = create<TapState>()(
       isShiftPressed: false,
       isAltPressed: false,
       showMetadata: true,
+      autoFocusPrompt: false,
+      promptPanelWidth: 360,
+      autoExpandOnSelect: true,
+      autoExpandText: true,
+      autoExpandImage: true,
+      autoExpandVideo: true,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
       setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
       setMultiSelectMasterEnabled: (enabled: boolean) => set({ isMultiSelectMasterEnabled: enabled }),
@@ -314,6 +350,12 @@ export const useTapStore = create<TapState>()(
         set({ isAltPressed: enabled });
       },
       setShowMetadata: (enabled: boolean) => set({ showMetadata: enabled }),
+      setAutoFocusPrompt: (enabled: boolean) => set({ autoFocusPrompt: enabled }),
+      setPromptPanelWidth: (width: number) => set({ promptPanelWidth: width }),
+      setAutoExpandOnSelect: (enabled: boolean) => set({ autoExpandOnSelect: enabled }),
+      setAutoExpandText: (enabled: boolean) => set({ autoExpandText: enabled }),
+      setAutoExpandImage: (enabled: boolean) => set({ autoExpandImage: enabled }),
+      setAutoExpandVideo: (enabled: boolean) => set({ autoExpandVideo: enabled }),
       onNodesChange: (changes: NodeChange<TapNode>[]) => {
         const currentNodes = get().nodes;
         
@@ -647,6 +689,29 @@ export const useTapStore = create<TapState>()(
       setGlobalDefault: (type, modelKey) => set({
         globalDefaults: { ...get().globalDefaults, [type]: modelKey }
       }),
+      setImageConfig: (config, modelKey) => {
+        if (modelKey) {
+          const overrides = { ...get().modelOverrides };
+          const current = overrides[modelKey]?.imageConfig || get().globalDefaults.imageConfig;
+          overrides[modelKey] = {
+            ...overrides[modelKey],
+            imageConfig: { ...current, ...config }
+          };
+          set({ modelOverrides: overrides });
+        } else {
+          set({
+            globalDefaults: {
+              ...get().globalDefaults,
+              imageConfig: { ...get().globalDefaults.imageConfig, ...config }
+            }
+          });
+        }
+      },
+      removeModelOverride: (modelKey) => {
+        const overrides = { ...get().modelOverrides };
+        delete overrides[modelKey];
+        set({ modelOverrides: overrides });
+      },
       setGlobalMock: (enabled: boolean) => set({
         isDemoMode: enabled
       }),
@@ -1098,7 +1163,9 @@ export const useTapStore = create<TapState>()(
         skipOverwriteConfirm: state.skipOverwriteConfirm,
         rememberPinTargetChoice: state.rememberPinTargetChoice,
         lastPinTargetId: state.lastPinTargetId,
-        showMetadata: state.showMetadata
+        showMetadata: state.showMetadata,
+        autoFocusPrompt: state.autoFocusPrompt,
+        promptPanelWidth: state.promptPanelWidth
       }),
     }
   )

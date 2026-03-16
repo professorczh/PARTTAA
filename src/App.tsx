@@ -87,6 +87,7 @@ import {
 
 import { PinEdge } from './components/PinEdge';
 import { MobileModifierPanel } from './components/MobileModifierPanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const nodeTypes = {
   'text-node': TextNode,
@@ -824,380 +825,399 @@ function Flow() {
         onDrop={onDrop}
       >
         <MobileModifierPanel />
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onConnectStart={onConnectStart}
-          onConnectEnd={onConnectEnd}
-          onSelectionEnd={onSelectionEnd}
-          onNodesDelete={deleteNodes}
-          onNodeDragStart={onNodeDragStart}
-          onNodeDragStop={onNodeDragStop}
-          onPaneContextMenu={onPaneContextMenu}
-          onMouseDown={onMouseDown}
-          onPaneClick={onPaneClick}
-          onEdgesDelete={(edges) => {
-            console.log('Edges deleted:', edges);
-          }}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          connectionLineComponent={ConnectionLine}
-          deleteKeyCode={['Delete']}
-          selectionKeyCode={isMultiSelectMasterEnabled && isBoxSelectionEnabled ? 'Shift' : null}
-          multiSelectionKeyCode={isMultiSelectMasterEnabled && isShiftClickSelectionEnabled ? 'Shift' : null}
-          panOnDrag={interactionMode === 'pan' || isSpacePressed ? [0, 1, 2] : [1, 2]}
-          selectionOnDrag={isMultiSelectMasterEnabled && isBoxSelectionEnabled && interactionMode === 'selection' && !isSpacePressed}
-          panOnScroll={false}
-          zoomOnScroll={false}
-          zoomOnPinch={false}
-          preventScrolling={true}
-          selectionMode={SelectionMode.Partial}
-          nodesDraggable={!isSpacePressed}
-          nodesConnectable={interactionMode === 'selection' && !isSpacePressed}
-          elementsSelectable={!isSpacePressed}
-          className={cn(
-            interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
-            isRecognitionMode && "mode-recognition"
-          )}
-          onNodeClick={(event, node) => {
-            // If Master or Shift-Click is disabled, don't allow multi-selection via click
-            if (!isMultiSelectMasterEnabled || !isShiftClickSelectionEnabled) {
-              // Force single selection
-              const otherSelected = nodes.filter(n => n.selected && n.id !== node.id);
-              if (otherSelected.length > 0) {
-                onNodesChange([
-                  ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
-                  { id: node.id, type: 'select', selected: true }
-                ]);
-              }
-              return;
-            }
-
-            // If Shift/Ctrl/Meta is pressed, let React Flow handle multi-selection
-            if (event.shiftKey || event.ctrlKey || event.metaKey) return;
-
-            // Custom selection logic for parent-child linking
-            const nodeData = node.data as any;
-            if (nodeData.parentId) {
-              const parentNode = nodes.find(n => n.id === nodeData.parentId);
-              if (parentNode) {
-                const isParentSelected = parentNode.selected;
-                
-                // If parent is not selected, select both, deselect others
-                if (!isParentSelected) {
-                  const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
+        <ErrorBoundary name="ReactFlow">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
+            onSelectionEnd={onSelectionEnd}
+            onNodesDelete={deleteNodes}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
+            onPaneContextMenu={onPaneContextMenu}
+            onMouseDown={onMouseDown}
+            onPaneClick={onPaneClick}
+            onEdgesDelete={(edges) => {
+              console.log('Edges deleted:', edges);
+            }}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            connectionLineComponent={ConnectionLine}
+            deleteKeyCode={['Delete']}
+            selectionKeyCode={isMultiSelectMasterEnabled && isBoxSelectionEnabled ? 'Shift' : null}
+            multiSelectionKeyCode={isMultiSelectMasterEnabled && isShiftClickSelectionEnabled ? 'Shift' : null}
+            panOnDrag={interactionMode === 'pan' || isSpacePressed ? [0, 1, 2] : [1, 2]}
+            selectionOnDrag={isMultiSelectMasterEnabled && isBoxSelectionEnabled && interactionMode === 'selection' && !isSpacePressed}
+            panOnScroll={false}
+            zoomOnScroll={false}
+            zoomOnPinch={false}
+            preventScrolling={true}
+            selectionMode={SelectionMode.Partial}
+            nodesDraggable={!isSpacePressed}
+            nodesConnectable={interactionMode === 'selection' && !isSpacePressed}
+            elementsSelectable={!isSpacePressed}
+            className={cn(
+              interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
+              isRecognitionMode && "mode-recognition"
+            )}
+            onNodeClick={(event, node) => {
+              // If Master or Shift-Click is disabled, don't allow multi-selection via click
+              if (!isMultiSelectMasterEnabled || !isShiftClickSelectionEnabled) {
+                // Force single selection
+                const otherSelected = nodes.filter(n => n.selected && n.id !== node.id);
+                if (otherSelected.length > 0) {
                   onNodesChange([
                     ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
-                    { id: parentNode.id, type: 'select', selected: true },
                     { id: node.id, type: 'select', selected: true }
                   ]);
-                } else {
-                  // If parent is already selected, this second click on B deselects A
-                  const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
+                }
+                return;
+              }
+
+              // If Shift/Ctrl/Meta is pressed, let React Flow handle multi-selection
+              if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+
+              // Custom selection logic for parent-child linking
+              const nodeData = node.data as any;
+              if (nodeData.parentId) {
+                const parentNode = nodes.find(n => n.id === nodeData.parentId);
+                if (parentNode) {
+                  const isParentSelected = parentNode.selected;
+                  
+                  // If parent is not selected, select both, deselect others
+                  if (!isParentSelected) {
+                    const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
+                    onNodesChange([
+                      ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
+                      { id: parentNode.id, type: 'select', selected: true },
+                      { id: node.id, type: 'select', selected: true }
+                    ]);
+                  } else {
+                    // If parent is already selected, this second click on B deselects A
+                    const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
+                    onNodesChange([
+                      ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
+                      { id: parentNode.id, type: 'select', selected: false },
+                      { id: node.id, type: 'select', selected: true }
+                    ]);
+                  }
+                }
+              } else {
+                // If clicking a parent node directly, ensure only it is selected
+                const otherSelected = nodes.filter(n => n.selected && n.id !== node.id);
+                if (otherSelected.length > 0) {
                   onNodesChange([
                     ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
-                    { id: parentNode.id, type: 'select', selected: false },
                     { id: node.id, type: 'select', selected: true }
                   ]);
                 }
               }
-            } else {
-              // If clicking a parent node directly, ensure only it is selected
-              const otherSelected = nodes.filter(n => n.selected && n.id !== node.id);
-              if (otherSelected.length > 0) {
-                onNodesChange([
-                  ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
-                  { id: node.id, type: 'select', selected: true }
-                ]);
-              }
-            }
-          }}
-          fitView
-          fitViewOptions={{ duration: 1200 }}
-          colorMode="dark"
-          snapToGrid={isSnapToGrid}
-          snapGrid={[15, 15]}
-          connectionRadius={20}
-          connectionLineType={ConnectionLineType.Bezier}
-          connectionLineStyle={{ 
-            stroke: '#3b82f6', 
-            strokeWidth: 3, 
-            opacity: 0.9
-          }}
-          defaultEdgeOptions={{
-            type: 'default',
-            animated: false,
-            selectable: true,
-            reconnectable: true
-          }}
+            }}
+            fitView
+            fitViewOptions={{ duration: 1200 }}
+            colorMode="dark"
+            snapToGrid={isSnapToGrid}
+            snapGrid={[15, 15]}
+            connectionRadius={20}
+            connectionLineType={ConnectionLineType.Bezier}
+            connectionLineStyle={{ 
+              stroke: '#3b82f6', 
+              strokeWidth: 3, 
+              opacity: 0.9
+            }}
+            defaultEdgeOptions={{
+              type: 'default',
+              animated: false,
+              selectable: true,
+              reconnectable: true
+            }}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={30} size={1} color="#262626" />
+            <MiniMap 
+              className="bg-[var(--app-panel)] border-[var(--app-border)] rounded-xl overflow-hidden" 
+              nodeColor="#991b1b"
+              maskColor="rgba(0,0,0,0.5)"
+            />
+            
+            {/* Context Menu */}
+            {menu && (
+              <div 
+                className="fixed bg-[var(--app-panel)] border border-[var(--app-border)] rounded-xl shadow-2xl z-[100] overflow-hidden min-w-[160px] hud-border"
+                style={{ top: menu.top, left: menu.left }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="p-2 border-b border-[var(--app-border)] text-[8px] uppercase tracking-widest text-[var(--app-text-muted)] font-bold">Add Node</div>
+        <button 
+          onClick={() => handleAddNode('text-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+          className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
         >
-          <Background variant={BackgroundVariant.Dots} gap={30} size={1} color="#262626" />
-          <MiniMap 
-            className="bg-[var(--app-panel)] border-[var(--app-border)] rounded-xl overflow-hidden" 
-            nodeColor="#991b1b"
-            maskColor="rgba(0,0,0,0.5)"
-          />
-          
-          {/* Context Menu */}
-          {menu && (
-            <div 
-              className="fixed bg-[var(--app-panel)] border border-[var(--app-border)] rounded-xl shadow-2xl z-[100] overflow-hidden min-w-[160px] hud-border"
-              style={{ top: menu.top, left: menu.left }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className="p-2 border-b border-[var(--app-border)] text-[8px] uppercase tracking-widest text-[var(--app-text-muted)] font-bold">Add Node</div>
-      <button 
-        onClick={() => handleAddNode('text-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-      >
-        <Type size={14} className="text-emerald-400" />
-        <span>Text Node</span>
-      </button>
-      <button 
-        onClick={() => handleAddNode('image-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-      >
-        <ImageIcon size={14} className="text-blue-400" />
-        <span>Image Node</span>
-      </button>
-      <button 
-        onClick={() => handleAddNode('video-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-      >
-        <Video size={14} className="text-purple-400" />
-        <span>Video Node</span>
-      </button>
-    </div>
-  )}
+          <Type size={14} className="text-emerald-400" />
+          <span>Text Node</span>
+        </button>
+        <button 
+          onClick={() => handleAddNode('image-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+          className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+        >
+          <ImageIcon size={14} className="text-blue-400" />
+          <span>Image Node</span>
+        </button>
+        <button 
+          onClick={() => handleAddNode('video-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+          className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+        >
+          <Video size={14} className="text-purple-400" />
+          <span>Video Node</span>
+        </button>
+      </div>
+    )}
 
-          {/* Specialized UI Overlays */}
-          <AnimatePresence>
-            {/* Drag-to-create pending line */}
-            {menu?.sourceHandle && (
-              <svg className="fixed inset-0 w-full h-full pointer-events-none z-[999]">
-                {(() => {
-                  const sourceNode = nodes.find(n => n.id === menu.sourceHandle?.nodeId);
-                  if (!sourceNode) return null;
-                  
-                  // Match handle position exactly by finding the DOM element
-                  const handleEl = document.querySelector(`[data-id="${sourceNode.id}"] [data-handleid="${menu.sourceHandle?.handleId}"]`);
-                  let start;
-                  
-                  if (handleEl) {
-                    const rect = handleEl.getBoundingClientRect();
-                    start = {
-                      x: rect.left + rect.width / 2,
-                      y: rect.top + rect.height / 2
-                    };
-                  } else {
-                    // Fallback to approximate position if DOM element not found
-                    start = flowToScreenPosition({
-                      x: sourceNode.position.x + (sourceNode.measured?.width || 360),
-                      y: sourceNode.position.y + (sourceNode.measured?.height || 220) / 2
-                    });
-                  }
-                  
-                  const end = { x: menu.left, y: menu.top };
-                  
-                  // Calculate Bezier curve points to match React Flow's default look
-                  const dx = end.x - start.x;
-                  const absDx = Math.abs(dx);
-                  
-                  // Curvature logic similar to React Flow's getBezierPath
-                  const controlOffset = Math.max(absDx / 2, 50);
-                  
-                  const path = `M ${start.x},${start.y} C ${start.x + controlOffset},${start.y} ${end.x - controlOffset},${end.y} ${end.x},${end.y}`;
-                  
-                  // Match colors from store.ts onConnect
-                  let strokeColor = '#3b82f6'; // Default Blue
-                  const hId = menu.sourceHandle?.handleId || '';
-                  if (hId.includes('image')) strokeColor = '#ef4444'; // Red
-                  if (hId.includes('video')) strokeColor = '#a855f7'; // Purple
-                  
-                  return (
-                    <motion.path
-                      initial={{ opacity: 0 }}
-                      animate={{ 
-                        opacity: 0.8,
-                        strokeDashoffset: [0, -10]
-                      }}
-                      transition={{
-                        strokeDashoffset: {
-                          duration: 0.5,
-                          repeat: Infinity,
-                          ease: "linear"
-                        }
-                      }}
-                      d={path}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth="2"
-                      strokeDasharray="5,5"
-                    />
-                  );
-                })()}
-              </svg>
-            )}
-
-          </AnimatePresence>
-
-          {/* Floating Controls Panel */}
-          <Panel position="bottom-center" className="mb-8">
-            <div className="flex items-center gap-1.5 p-1 glass-panel rounded-xl hud-border">
-              <button 
-                onClick={() => handleAddNode('image-node')}
-                className="w-8 h-8 rounded-lg bg-[var(--brand-red)] text-white flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-red-900/20"
-              >
-                <Plus size={18} />
-              </button>
-              <div className="h-5 w-px bg-[var(--app-border)] mx-1" />
-              <div className="flex items-center gap-0.5">
-                <button 
-                  onClick={() => setInteractionMode('selection')}
-                  className={cn(
-                    "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
-                    (interactionMode === 'selection' && !isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
-                  )}
-                  title="Selection Tool (V)"
-                >
-                  <MousePointer2 size={16} />
-                </button>
-                <button 
-                  onClick={() => setInteractionMode('pan')}
-                  className={cn(
-                    "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
-                    (interactionMode === 'pan' || isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
-                  )}
-                  title="Pan Tool (H)"
-                >
-                  <Hand size={16} />
-                </button>
-                <button 
-                  onClick={() => setIsSnapToGrid(!isSnapToGrid)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] transition-all group"
-                  title={isSnapToGrid ? "Disable Grid Snapping" : "Enable Grid Snapping"}
-                >
-                  <Grid 
-                    size={16} 
-                    className={cn(
-                      "transition-colors",
-                      isSnapToGrid ? "text-[var(--brand-red)]" : "text-[var(--app-text-muted)] group-hover:text-white"
-                    )} 
-                  />
-                </button>
-              </div>
-              <div className="h-5 w-px bg-[var(--app-border)] mx-1" />
-              <div className="flex items-center gap-0.5">
-                <button 
-                  onClick={() => smoothZoom(1 / 1.2)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
-                  title="Zoom Out"
-                >
-                  <ZoomOut size={16} />
-                </button>
-                <button 
-                  onClick={() => smoothZoom(1.2)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
-                  title="Zoom In"
-                >
-                  <ZoomIn size={16} />
-                </button>
-                <button 
-                  onClick={() => fitView({ duration: 1000 })}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
-                  title="Fit View"
-                >
-                  <Maximize size={16} />
-                </button>
-              </div>
-            </div>
-          </Panel>
-
-          {/* HUD Info Panel */}
-          <Panel position="top-right" className="mt-4 mr-4">
-            <div className="w-48 glass-panel rounded-xl p-4 border-l-4 border-l-[var(--brand-red)]">
-              <h3 className="text-[10px] font-display uppercase tracking-widest text-[var(--app-text-muted)] mb-2">System Status</h3>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-mono">NODES</span>
-                  <span className="text-[10px] font-mono text-[var(--brand-red)] font-bold">{nodes.length}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-mono">EDGES</span>
-                  <span className="text-[10px] font-mono text-[var(--brand-red)] font-bold">{edges.length}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-mono">LATENCY</span>
-                  <span className="text-[10px] font-mono text-emerald-500">24MS</span>
-                </div>
-              </div>
-              <div className="mt-4 pt-4 border-t border-[var(--app-border)]">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-mono uppercase">Engine Ready</span>
-                </div>
-              </div>
-            </div>
-          </Panel>
-
-          {/* Global Dropzone Overlay */}
-          <AnimatePresence>
-            {isDraggingOver && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className={cn(
-                  "absolute inset-0 z-[200] flex items-center justify-center p-8 transition-colors duration-300",
-                  isInvalidFormat ? "bg-orange-500/10" : "bg-black/30 backdrop-blur-[2px]"
-                )}
-              >
-                <motion.div
-                  initial={{ scale: 0.95, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className={cn(
-                    "w-full h-full border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-colors duration-300",
-                    isInvalidFormat ? "border-orange-500/40" : "border-[var(--brand-red)]/40"
-                  )}
-                >
-                  <div className="glass-panel p-8 rounded-2xl border border-white/10 flex flex-col items-center gap-4 shadow-2xl">
-                    <div className={cn(
-                      "w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-300",
-                      isInvalidFormat ? "bg-orange-500/20 text-orange-400" : "bg-[var(--brand-red)]/20 text-[var(--brand-red)]"
-                    )}>
-                      {isInvalidFormat ? <Box size={24} /> : <ImageIcon size={24} />}
-                    </div>
+            {/* Specialized UI Overlays */}
+            <AnimatePresence>
+              {/* Drag-to-create pending line */}
+              {menu?.sourceHandle && (
+                <svg className="fixed inset-0 w-full h-full pointer-events-none z-[999]">
+                  {(() => {
+                    const sourceNode = nodes.find(n => n.id === menu.sourceHandle?.nodeId);
+                    if (!sourceNode) return null;
                     
-                    <div className="text-center space-y-1">
-                      <h2 className={cn(
-                        "text-xl font-display uppercase tracking-widest transition-colors duration-300",
-                        isInvalidFormat ? "text-orange-400" : "text-white"
-                      )}>
-                        {isInvalidFormat ? "Unsupported Format" : "Drop to Upload"}
-                      </h2>
-                      <p className="text-[var(--app-text-muted)] font-mono text-[10px] uppercase tracking-[0.2em]">
-                        {isInvalidFormat ? "JPG, PNG, WEBP ONLY" : "Creating new node at cursor"}
-                      </p>
-                    </div>
+                    // Match handle position exactly by finding the DOM element
+                    const handleEl = document.querySelector(`[data-id="${sourceNode.id}"] [data-handleid="${menu.sourceHandle?.handleId}"]`);
+                    let start;
+                    
+                    if (handleEl) {
+                      const rect = handleEl.getBoundingClientRect();
+                      start = {
+                        x: rect.left + rect.width / 2,
+                        y: rect.top + rect.height / 2
+                      };
+                    } else {
+                      // Fallback to approximate position if DOM element not found
+                      start = flowToScreenPosition({
+                        x: sourceNode.position.x + (sourceNode.measured?.width || 360),
+                        y: sourceNode.position.y + (sourceNode.measured?.height || 220) / 2
+                      });
+                    }
+                    
+                    const end = { x: menu.left, y: menu.top };
+                    
+                    // Calculate Bezier curve points to match React Flow's default look
+                    const dx = end.x - start.x;
+                    const absDx = Math.abs(dx);
+                    
+                    // Curvature logic similar to React Flow's getBezierPath
+                    const controlOffset = Math.max(absDx / 2, 50);
+                    
+                    const path = `M ${start.x},${start.y} C ${start.x + controlOffset},${start.y} ${end.x - controlOffset},${end.y} ${end.x},${end.y}`;
+                    
+                    // Match colors from store.ts onConnect
+                    let strokeColor = '#3b82f6'; // Default Blue
+                    const hId = menu.sourceHandle?.handleId || '';
+                    if (hId.includes('image')) strokeColor = '#ef4444'; // Red
+                    if (hId.includes('video')) strokeColor = '#a855f7'; // Purple
+                    
+                    return (
+                      <motion.path
+                        initial={{ opacity: 0 }}
+                        animate={{ 
+                          opacity: 0.8,
+                          strokeDashoffset: [0, -10]
+                        }}
+                        transition={{
+                          strokeDashoffset: {
+                            duration: 0.5,
+                            repeat: Infinity,
+                            ease: "linear"
+                          }
+                        }}
+                        d={path}
+                        fill="none"
+                        stroke={strokeColor}
+                        strokeWidth="2"
+                        strokeDasharray="5,5"
+                      />
+                    );
+                  })()}
+                </svg>
+              )}
 
-                    {isInvalidFormat && (
-                      <motion.div 
-                        initial={{ y: 5, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        className="px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded text-[9px] text-orange-400 font-bold uppercase tracking-widest"
-                      >
-                        Invalid File Type
-                      </motion.div>
+            </AnimatePresence>
+
+            {/* Floating Controls Panel */}
+            <Panel position="bottom-center" className="mb-8">
+              <div className="flex items-center gap-1.5 p-1 glass-panel rounded-xl hud-border">
+                <div className="flex items-center gap-1">
+                  <button 
+                    onClick={() => handleAddNode('text-node')}
+                    className="w-8 h-8 rounded-lg border border-emerald-400/30 text-emerald-400 flex items-center justify-center hover:bg-emerald-400/10 hover:scale-105 transition-all"
+                    title="Add Text Node"
+                  >
+                    <Type size={16} />
+                  </button>
+                  <button 
+                    onClick={() => handleAddNode('image-node')}
+                    className="w-8 h-8 rounded-lg border border-blue-400/30 text-blue-400 flex items-center justify-center hover:bg-blue-400/10 hover:scale-105 transition-all"
+                    title="Add Image Node"
+                  >
+                    <ImageIcon size={16} />
+                  </button>
+                  <button 
+                    onClick={() => handleAddNode('video-node')}
+                    className="w-8 h-8 rounded-lg border border-purple-400/30 text-purple-400 flex items-center justify-center hover:bg-purple-400/10 hover:scale-105 transition-all"
+                    title="Add Video Node"
+                  >
+                    <Video size={16} />
+                  </button>
+                </div>
+                <div className="h-5 w-px bg-[var(--app-border)] mx-1" />
+                <div className="flex items-center gap-0.5">
+                  <button 
+                    onClick={() => setInteractionMode('selection')}
+                    className={cn(
+                      "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
+                      (interactionMode === 'selection' && !isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
                     )}
+                    title="Selection Tool (V)"
+                  >
+                    <MousePointer2 size={16} />
+                  </button>
+                  <button 
+                    onClick={() => setInteractionMode('pan')}
+                    className={cn(
+                      "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
+                      (interactionMode === 'pan' || isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
+                    )}
+                    title="Pan Tool (H)"
+                  >
+                    <Hand size={16} />
+                  </button>
+                  <button 
+                    onClick={() => setIsSnapToGrid(!isSnapToGrid)}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] transition-all group"
+                    title={isSnapToGrid ? "Disable Grid Snapping" : "Enable Grid Snapping"}
+                  >
+                    <Grid 
+                      size={16} 
+                      className={cn(
+                        "transition-colors",
+                        isSnapToGrid ? "text-[var(--brand-red)]" : "text-[var(--app-text-muted)] group-hover:text-white"
+                      )} 
+                    />
+                  </button>
+                </div>
+                <div className="h-5 w-px bg-[var(--app-border)] mx-1" />
+                <div className="flex items-center gap-0.5">
+                  <button 
+                    onClick={() => smoothZoom(1 / 1.2)}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut size={16} />
+                  </button>
+                  <button 
+                    onClick={() => smoothZoom(1.2)}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
+                    title="Zoom In"
+                  >
+                    <ZoomIn size={16} />
+                  </button>
+                  <button 
+                    onClick={() => fitView({ duration: 1000 })}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all"
+                    title="Fit View"
+                  >
+                    <Maximize size={16} />
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
+            {/* HUD Info Panel */}
+            <Panel position="top-right" className="mt-4 mr-4">
+              <div className="w-48 glass-panel rounded-xl p-4 border-l-4 border-l-[var(--brand-red)]">
+                <h3 className="text-[10px] font-display uppercase tracking-widest text-[var(--app-text-muted)] mb-2">System Status</h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-mono">NODES</span>
+                    <span className="text-[10px] font-mono text-[var(--brand-red)] font-bold">{nodes.length}</span>
                   </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-mono">EDGES</span>
+                    <span className="text-[10px] font-mono text-[var(--brand-red)] font-bold">{edges.length}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-mono">LATENCY</span>
+                    <span className="text-[10px] font-mono text-emerald-500">24MS</span>
+                  </div>
+                </div>
+                <div className="mt-4 pt-4 border-t border-[var(--app-border)]">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[10px] font-mono uppercase">Engine Ready</span>
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
+            {/* Global Dropzone Overlay */}
+            <AnimatePresence>
+              {isDraggingOver && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className={cn(
+                    "absolute inset-0 z-[200] flex items-center justify-center p-8 transition-colors duration-300",
+                    isInvalidFormat ? "bg-orange-500/10" : "bg-black/30 backdrop-blur-[2px]"
+                  )}
+                >
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className={cn(
+                      "w-full h-full border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-colors duration-300",
+                      isInvalidFormat ? "border-orange-500/40" : "border-[var(--brand-red)]/40"
+                    )}
+                  >
+                    <div className="glass-panel p-8 rounded-2xl border border-white/10 flex flex-col items-center gap-4 shadow-2xl">
+                      <div className={cn(
+                        "w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-300",
+                        isInvalidFormat ? "bg-orange-500/20 text-orange-400" : "bg-[var(--brand-red)]/20 text-[var(--brand-red)]"
+                      )}>
+                        {isInvalidFormat ? <Box size={24} /> : <ImageIcon size={24} />}
+                      </div>
+                      
+                      <div className="text-center space-y-1">
+                        <h2 className={cn(
+                          "text-xl font-display uppercase tracking-widest transition-colors duration-300",
+                          isInvalidFormat ? "text-orange-400" : "text-white"
+                        )}>
+                          {isInvalidFormat ? "Unsupported Format" : "Drop to Upload"}
+                        </h2>
+                        <p className="text-[var(--app-text-muted)] font-mono text-[10px] uppercase tracking-[0.2em]">
+                          {isInvalidFormat ? "JPG, PNG, WEBP ONLY" : "Creating new node at cursor"}
+                        </p>
+                      </div>
+
+                      {isInvalidFormat && (
+                        <motion.div 
+                          initial={{ y: 5, opacity: 0 }}
+                          animate={{ y: 0, opacity: 1 }}
+                          className="px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded text-[9px] text-orange-400 font-bold uppercase tracking-widest"
+                        >
+                          Invalid File Type
+                        </motion.div>
+                      )}
+                    </div>
+                  </motion.div>
                 </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </ReactFlow>
+              )}
+            </AnimatePresence>
+          </ReactFlow>
+        </ErrorBoundary>
       </main>
 
       {/* Footer Status Bar */}
@@ -1218,14 +1238,18 @@ function Flow() {
         </div>
       </footer>
 
-      <ModelsModal 
-        isOpen={isModelsModalOpen} 
-        onClose={() => setIsModelsModalOpen(false)} 
-      />
-      <SettingsModal
-        isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
-      />
+      <ErrorBoundary name="ModelsModal">
+        <ModelsModal 
+          isOpen={isModelsModalOpen} 
+          onClose={() => setIsModelsModalOpen(false)} 
+        />
+      </ErrorBoundary>
+      <ErrorBoundary name="SettingsModal">
+        <SettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={() => setIsSettingsModalOpen(false)}
+        />
+      </ErrorBoundary>
       
       {/* Toast */}
       <Toast 

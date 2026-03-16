@@ -17,9 +17,14 @@ import {
   ChevronDown,
   RotateCcw,
   GripVertical,
-  Power
+  Power,
+  Image as ImageIcon,
+  Settings2,
+  LayoutGrid,
+  ArrowRightLeft,
+  PlusCircle
 } from 'lucide-react';
-import { useTapStore, ProviderConfig, ModelConfig, ProviderType } from '../store';
+import { useTapStore, ProviderConfig, ModelConfig, ProviderType, ImageConfig } from '../store';
 import { aiService } from '../services/aiService';
 import { clsx } from 'clsx';
 import { ConfirmDialog, Toast } from './UI';
@@ -31,15 +36,20 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+  defaultDropAnimationSideEffects
 } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { SUPPORTED_RATIOS, SUPPORTED_QUALITIES } from '../constants';
 
 interface ModelsModalProps {
   isOpen: boolean;
@@ -112,22 +122,23 @@ const SortableModelItem = ({
 
       <div className="flex-1 p-2 space-y-2">
         <div className="flex items-center gap-1.5">
-          <select
+          <CustomSelect
             disabled={selectedProvider.defaultProtocol !== 'mix'}
             value={selectedProvider.defaultProtocol === 'mix' ? (model.protocol || 'openai-compatible') : selectedProvider.defaultProtocol}
-            onChange={(e) => {
+            onChange={(val) => {
               const newModels = [...selectedProvider.models];
-              newModels[globalIdx] = { ...model, protocol: e.target.value as any };
+              newModels[globalIdx] = { ...model, protocol: val as any };
               handleUpdateProvider(selectedProvider.id, { models: newModels });
             }}
-            className={clsx(
-              "bg-black/40 border border-white/10 rounded-md px-1 py-0.5 text-[9px] font-bold focus:outline-none transition-all",
-              selectedProvider.defaultProtocol === 'mix' ? "text-[var(--brand-red)] cursor-pointer" : "text-zinc-600 cursor-not-allowed opacity-50"
+            options={[
+              { value: 'openai-compatible', label: 'O' },
+              { value: 'gemini', label: 'G' }
+            ]}
+            buttonClassName={clsx(
+              "bg-black/40 border border-white/10 rounded-md px-1 py-0.5 text-[9px] font-bold h-6 min-w-[32px]",
+              selectedProvider.defaultProtocol === 'mix' ? "text-[var(--brand-red)]" : "text-zinc-600"
             )}
-          >
-            <option value="openai-compatible">O</option>
-            <option value="gemini">G</option>
-          </select>
+          />
           <input 
             type="text"
             value={model.id}
@@ -174,6 +185,212 @@ const SortableModelItem = ({
   );
 };
 
+const SortableRatioItem = ({ 
+  id, 
+  ratio, 
+  isDefault, 
+  onSetDefault, 
+  onRemove 
+}: { 
+  id: string; 
+  ratio: string; 
+  isDefault: boolean; 
+  onSetDefault: () => void; 
+  onRemove: () => void;
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+  };
+
+  // Helper to get aspect ratio box style
+  const getRatioStyle = (r: string) => {
+    const [w, h] = r.split(':').map(Number);
+    if (w > h) return { width: '16px', height: `${(h / w) * 16}px` };
+    if (h > w) return { width: `${(w / h) * 16}px`, height: '16px' };
+    return { width: '14px', height: '14px' };
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={clsx(
+        "relative group flex flex-col items-center justify-center gap-1 p-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing",
+        isDragging ? "opacity-50 scale-95 border-[var(--brand-red)] bg-[var(--brand-red)]/10" : 
+        isDefault ? "border-[var(--brand-red)] bg-[var(--brand-red)]/5 shadow-[0_0_10px_rgba(239,68,68,0.1)]" : "border-white/10 bg-white/5 hover:border-white/20"
+      )}
+      {...attributes}
+      {...listeners}
+    >
+      <div className="flex items-center justify-center w-6 h-6">
+        <div 
+          className={clsx("border rounded-sm", isDefault ? "border-[var(--brand-red)]" : "border-white/40")} 
+          style={getRatioStyle(ratio)} 
+        />
+      </div>
+      <span className={clsx("text-[9px] font-bold", isDefault ? "text-[var(--brand-red)]" : "text-white/60")}>
+        {ratio}
+      </span>
+
+      {/* Actions */}
+      <div className="absolute -top-1 -right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
+          className={clsx(
+            "w-4 h-4 rounded-full flex items-center justify-center transition-all",
+            isDefault ? "bg-[var(--brand-red)] text-white" : "bg-zinc-800 text-zinc-500 hover:text-white"
+          )}
+          title="Set as Default"
+        >
+          <Check size={8} />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="w-4 h-4 rounded-full bg-zinc-800 text-zinc-500 hover:text-red-500 flex items-center justify-center transition-all"
+          title="Remove"
+        >
+          <X size={8} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const DEFAULT_IMAGE_CONFIG = {
+  defaultRatio: '1:1',
+  defaultQuality: '1K',
+  ratioLayout: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5']
+};
+
+interface CustomSelectOption {
+  value: string;
+  label: string;
+  group?: string;
+}
+
+interface CustomSelectProps {
+  value: string;
+  onChange: (val: string) => void;
+  options: (string | CustomSelectOption)[];
+  className?: string;
+  buttonClassName?: string;
+  disabled?: boolean;
+}
+
+const CustomSelect = ({ value, onChange, options, className, buttonClassName, disabled }: CustomSelectProps) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const flatOptions = useMemo(() => {
+    return options.map(opt => typeof opt === 'string' ? { value: opt, label: opt } : opt);
+  }, [options]);
+
+  const selectedOption = flatOptions.find(opt => opt.value === value);
+
+  // Group options
+  const groupedOptions = useMemo(() => {
+    const groups: { [key: string]: CustomSelectOption[] } = {};
+    const noGroup: CustomSelectOption[] = [];
+
+    flatOptions.forEach(opt => {
+      if (opt.group) {
+        if (!groups[opt.group]) groups[opt.group] = [];
+        groups[opt.group].push(opt);
+      } else {
+        noGroup.push(opt);
+      }
+    });
+
+    return { groups, noGroup };
+  }, [flatOptions]);
+
+  return (
+    <div className={clsx("relative", className)}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setIsOpen(!isOpen)}
+        className={clsx(
+          "w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-[11px] text-white flex items-center justify-between hover:bg-white/10 transition-all focus:outline-none focus:border-[var(--brand-red)]",
+          disabled && "opacity-50 cursor-not-allowed grayscale",
+          buttonClassName
+        )}
+      >
+        <span className="truncate">{selectedOption?.label || value || 'Select...'}</span>
+        <ChevronDown size={12} className={clsx("transition-transform duration-200 text-white/40", isOpen && "rotate-180")} />
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-[60]" onClick={() => setIsOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, y: -4, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -4, scale: 0.95 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="absolute top-full left-0 right-0 mt-1.5 bg-[#1a1a1a] border border-white/10 rounded-xl overflow-hidden z-[70] shadow-2xl max-h-64 overflow-y-auto custom-scrollbar"
+            >
+              {groupedOptions.noGroup.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(opt.value);
+                    setIsOpen(false);
+                  }}
+                  className={clsx(
+                    "w-full px-3 py-2 text-[11px] text-left transition-colors flex items-center justify-between group",
+                    value === opt.value ? "text-[var(--brand-red)] bg-white/5" : "text-white/70 hover:bg-white/5 hover:text-white"
+                  )}
+                >
+                  <span>{opt.label}</span>
+                  {value === opt.value && <Check size={10} />}
+                </button>
+              ))}
+
+              {Object.entries(groupedOptions.groups).map(([groupName, groupOpts]) => (
+                <div key={groupName} className="border-t border-white/5 first:border-t-0">
+                  <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white/20 bg-white/[0.02]">
+                    {groupName}
+                  </div>
+                  {groupOpts.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        onChange(opt.value);
+                        setIsOpen(false);
+                      }}
+                      className={clsx(
+                        "w-full px-3 py-2 text-[11px] text-left transition-colors flex items-center justify-between group pl-5",
+                        value === opt.value ? "text-[var(--brand-red)] bg-white/5" : "text-white/70 hover:bg-white/5 hover:text-white"
+                      )}
+                    >
+                      <span>{opt.label}</span>
+                      {value === opt.value && <Check size={10} />}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   const { 
     providers: storeProviders, 
@@ -187,8 +404,12 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   // Local state for editing
   const [localProviders, setLocalProviders] = useState<ProviderConfig[]>([]);
   const [localGlobalDefaults, setLocalGlobalDefaults] = useState(storeGlobalDefaults);
+  const [localModelOverrides, setLocalModelOverrides] = useState(useTapStore.getState().modelOverrides);
   
   const [selectedProviderId, setSelectedProviderId] = useState<string | 'global-settings'>('global-settings');
+  const [imageConfigTab, setImageConfigTab] = useState<string>('GLOBAL');
+  const [showOverrideSelector, setShowOverrideSelector] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
 
@@ -212,9 +433,23 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   // Initialize local state when modal opens
   useEffect(() => {
     if (isOpen) {
-      setLocalProviders(JSON.parse(JSON.stringify(storeProviders)));
-      setLocalGlobalDefaults({ ...storeGlobalDefaults });
+      setLocalProviders(JSON.parse(JSON.stringify(storeProviders || [])));
+      
+      // Ensure imageConfig exists in global defaults
+      const defaults = { ...storeGlobalDefaults };
+      if (!defaults.imageConfig) {
+        defaults.imageConfig = {
+          defaultRatio: '1:1',
+          defaultQuality: '1K',
+          ratioLayout: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5']
+        };
+      }
+      setLocalGlobalDefaults(defaults);
+      
+      setLocalModelOverrides(JSON.parse(JSON.stringify(useTapStore.getState().modelOverrides || {})));
       setSelectedProviderId('global-settings');
+      setImageConfigTab('GLOBAL');
+      setShowOverrideSelector(false);
       // Reset UI states
       setShowUnsavedConfirm(false);
       setShowSaveToast(false);
@@ -225,8 +460,9 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
 
   const hasChanges = useMemo(() => {
     return JSON.stringify(localProviders) !== JSON.stringify(storeProviders) ||
-           JSON.stringify(localGlobalDefaults) !== JSON.stringify(storeGlobalDefaults);
-  }, [localProviders, storeProviders, localGlobalDefaults, storeGlobalDefaults]);
+           JSON.stringify(localGlobalDefaults) !== JSON.stringify(storeGlobalDefaults) ||
+           JSON.stringify(localModelOverrides) !== JSON.stringify(useTapStore.getState().modelOverrides);
+  }, [localProviders, storeProviders, localGlobalDefaults, storeGlobalDefaults, localModelOverrides]);
 
   const selectedProvider = localProviders.find(p => p.id === selectedProviderId);
 
@@ -289,6 +525,21 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     storeSetGlobalDefault('text', localGlobalDefaults.text);
     storeSetGlobalDefault('image', localGlobalDefaults.image);
     storeSetGlobalDefault('video', localGlobalDefaults.video);
+    useTapStore.getState().setImageConfig(localGlobalDefaults.imageConfig);
+
+    // 3. Update overrides
+    // First remove ones that are gone
+    const currentOverrideKeys = Object.keys(useTapStore.getState().modelOverrides);
+    const localOverrideKeys = Object.keys(localModelOverrides);
+    currentOverrideKeys.forEach(key => {
+      if (!localOverrideKeys.includes(key)) useTapStore.getState().removeModelOverride(key);
+    });
+
+    // Then update/add
+    localOverrideKeys.forEach(key => {
+      const config = localModelOverrides[key].imageConfig;
+      if (config) useTapStore.getState().setImageConfig(config, key);
+    });
 
     setShowSaveToast(true);
     
@@ -484,32 +735,28 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         </h3>
                       </div>
                       
-                      <div className="grid gap-6">
+                      <div className="grid grid-cols-3 gap-4">
                         {(['text', 'image', 'video'] as const).map(type => (
                           <div key={type} className="space-y-2">
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">
-                              {type === 'text' ? 'Text / Vision Model' : type === 'image' ? 'Image Generation' : 'Video Generation'}
+                            <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">
+                              {type === 'text' ? 'Text / Vision' : type === 'image' ? 'Image Gen' : 'Video Gen'}
                             </label>
                             <div className="relative group">
-                              <select
+                              <CustomSelect
                                 value={localGlobalDefaults[type]}
-                                onChange={(e) => handleSetGlobalDefault(type, e.target.value)}
-                                className="w-full bg-[#1a1a1a] border border-[var(--app-border)] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[var(--brand-red)] transition-all appearance-none"
-                              >
-                                <option value="" className="bg-[#1a1a1a]">Not Set</option>
-                                {localProviders.filter(p => p.enabled).map(p => (
-                                  <optgroup key={p.id} label={p.name} className="bg-[#1a1a1a] text-[var(--app-text-muted)]">
-                                    {p.models.filter(m => m.enabled && m.capabilities[type === 'text' ? 'text' : type]).map(m => (
-                                      <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`} className="bg-[#1a1a1a] text-white">
-                                        {m.name || m.id} ({m.id})
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                ))}
-                              </select>
-                              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
-                                <ChevronDown size={14} />
-                              </div>
+                                onChange={(val) => handleSetGlobalDefault(type, val)}
+                                options={[
+                                  { value: "", label: "Not Set" },
+                                  ...localProviders.filter(p => p.enabled).flatMap(p => 
+                                    p.models.filter(m => m.enabled && m.capabilities[type === 'text' ? 'text' : type]).map(m => ({
+                                      value: `${p.id}:${m.id}`,
+                                      label: m.name || m.id,
+                                      group: p.name
+                                    }))
+                                  )
+                                ]}
+                                className="w-full"
+                              />
                             </div>
                           </div>
                         ))}
@@ -519,6 +766,357 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         <p className="text-[10px] text-blue-400/80 leading-relaxed">
                           New nodes will automatically use these defaults. Nodes that have been manually configured will retain their settings.
                         </p>
+                      </div>
+                    </section>
+
+                    {/* Image Node Configuration Section */}
+                    <section className="space-y-6 pt-4">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                        <div className="flex items-center gap-2">
+                          <ImageIcon size={14} className="text-[var(--brand-red)]" />
+                          <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-white">
+                            Image Node Configuration (UI & Workflow)
+                          </h3>
+                        </div>
+                      </div>
+
+                      {/* Tabs for Global vs Model Overrides */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setImageConfigTab('GLOBAL')}
+                          className={clsx(
+                            "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border",
+                            imageConfigTab === 'GLOBAL' 
+                              ? "bg-white/10 border-white/20 text-white" 
+                              : "bg-transparent border-transparent text-[var(--app-text-muted)] hover:text-white"
+                          )}
+                        >
+                          Global
+                        </button>
+                        {Object.keys(localModelOverrides).map(modelKey => (
+                          <div key={modelKey} className="group relative">
+                            <button
+                              onClick={() => setImageConfigTab(modelKey)}
+                              className={clsx(
+                                "px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border flex items-center gap-2",
+                                imageConfigTab === modelKey 
+                                  ? "bg-[var(--brand-red)]/10 border-[var(--brand-red)]/30 text-[var(--brand-red)]" 
+                                  : "bg-transparent border-transparent text-[var(--app-text-muted)] hover:text-white"
+                              )}
+                            >
+                              {modelKey.split(':')[1]}
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const newOverrides = { ...localModelOverrides };
+                                  delete newOverrides[modelKey];
+                                  setLocalModelOverrides(newOverrides);
+                                  if (imageConfigTab === modelKey) setImageConfigTab('GLOBAL');
+                                }}
+                                className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
+                              >
+                                <X size={10} />
+                              </button>
+                            </button>
+                          </div>
+                        ))}
+                        
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowOverrideSelector(!showOverrideSelector)}
+                            className="p-2 rounded-xl bg-white/5 border border-dashed border-white/20 hover:border-[var(--brand-red)]/50 hover:text-[var(--brand-red)] transition-all"
+                            title="Add Model Override"
+                          >
+                            <PlusCircle size={16} />
+                          </button>
+                          
+                          <AnimatePresence>
+                            {showOverrideSelector && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                className="absolute left-0 top-full mt-2 z-50 w-64 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl p-2 max-h-64 overflow-y-auto"
+                              >
+                                {localProviders.filter(p => p.enabled).map(p => (
+                                  <div key={p.id} className="space-y-1 mb-2 last:mb-0">
+                                    <div className="px-3 py-1 text-[8px] font-bold uppercase tracking-widest text-white/30">{p.name}</div>
+                                    {p.models.filter(m => m.enabled && m.capabilities.image).map(m => {
+                                      const key = `${p.id}:${m.id}`;
+                                      if (localModelOverrides[key]) return null;
+                                      return (
+                                        <button
+                                          key={key}
+                                          onClick={() => {
+                                            setLocalModelOverrides({
+                                              ...localModelOverrides,
+                                              [key]: { imageConfig: { ...localGlobalDefaults.imageConfig } }
+                                            });
+                                            setImageConfigTab(key);
+                                            setShowOverrideSelector(false);
+                                          }}
+                                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-[10px] font-medium transition-colors"
+                                        >
+                                          {m.name || m.id}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </div>
+
+                      {/* Config Area */}
+                      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {/* 1. Defaults */}
+                        <div className="grid grid-cols-2 gap-8">
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
+                              <Settings2 size={12} /> 1. Default Settings (For new nodes)
+                            </div>
+                            <div className="flex gap-4">
+                              <div className="flex-1 space-y-1.5">
+                                <label className="text-[8px] font-bold uppercase tracking-widest text-white/30 ml-1">Default Ratio</label>
+                                <CustomSelect
+                                  value={imageConfigTab === 'GLOBAL' ? localGlobalDefaults.imageConfig?.defaultRatio || '1:1' : localModelOverrides[imageConfigTab]?.imageConfig?.defaultRatio || '1:1'}
+                                  onChange={(val) => {
+                                    if (imageConfigTab === 'GLOBAL') {
+                                      setLocalGlobalDefaults({
+                                        ...localGlobalDefaults,
+                                        imageConfig: { ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), defaultRatio: val }
+                                      });
+                                    } else {
+                                      setLocalModelOverrides({
+                                        ...localModelOverrides,
+                                        [imageConfigTab]: {
+                                          ...localModelOverrides[imageConfigTab],
+                                          imageConfig: { ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), defaultRatio: val }
+                                        }
+                                      });
+                                    }
+                                  }}
+                                  options={SUPPORTED_RATIOS}
+                                />
+                              </div>
+                              <div className="flex-1 space-y-1.5">
+                                <label className="text-[8px] font-bold uppercase tracking-widest text-white/30 ml-1">Default Quality</label>
+                                <CustomSelect
+                                  value={imageConfigTab === 'GLOBAL' ? localGlobalDefaults.imageConfig?.defaultQuality || '1K' : localModelOverrides[imageConfigTab]?.imageConfig?.defaultQuality || '1K'}
+                                  onChange={(val) => {
+                                    if (imageConfigTab === 'GLOBAL') {
+                                      setLocalGlobalDefaults({
+                                        ...localGlobalDefaults,
+                                        imageConfig: { ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), defaultQuality: val }
+                                      });
+                                    } else {
+                                      setLocalModelOverrides({
+                                        ...localModelOverrides,
+                                        [imageConfigTab]: {
+                                          ...localModelOverrides[imageConfigTab],
+                                          imageConfig: { ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), defaultQuality: val }
+                                        }
+                                      });
+                                    }
+                                  }}
+                                  options={[...SUPPORTED_QUALITIES].reverse()}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. Panel Designer */}
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
+                            <LayoutGrid size={12} /> 2. Panel Designer (Drag & Drop to customize UI)
+                          </div>
+
+                          <div className="flex gap-8">
+                            {/* Available Pool */}
+                            <div className="w-48 space-y-3">
+                              <div className="text-[8px] font-bold uppercase tracking-widest text-white/30 ml-1">Available Ratios</div>
+                              <div className="grid grid-cols-2 gap-2 p-3 bg-white/5 border border-white/10 rounded-2xl min-h-[200px]">
+                                {SUPPORTED_RATIOS.filter(r => {
+                                  const layout = imageConfigTab === 'GLOBAL' 
+                                    ? localGlobalDefaults.imageConfig?.ratioLayout || []
+                                    : localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || [];
+                                  return !layout.includes(r);
+                                }).map(ratio => (
+                                  <button
+                                    key={ratio}
+                                    onClick={() => {
+                                      if (imageConfigTab === 'GLOBAL') {
+                                        const layout = [...(localGlobalDefaults.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout)];
+                                        if (layout.length < 12) {
+                                          layout.push(ratio);
+                                          setLocalGlobalDefaults({
+                                            ...localGlobalDefaults,
+                                            imageConfig: { ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), ratioLayout: layout }
+                                          });
+                                        }
+                                      } else {
+                                        const layout = [...(localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout)];
+                                        if (layout.length < 12) {
+                                          layout.push(ratio);
+                                          setLocalModelOverrides({
+                                            ...localModelOverrides,
+                                            [imageConfigTab]: {
+                                              ...localModelOverrides[imageConfigTab],
+                                              imageConfig: { ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), ratioLayout: layout }
+                                            }
+                                          });
+                                        }
+                                      }
+                                    }}
+                                    className="flex items-center justify-center p-2 rounded-lg bg-white/5 border border-white/5 hover:border-white/20 hover:bg-white/10 transition-all text-[9px] font-bold text-white/60"
+                                  >
+                                    {ratio}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Active Preview */}
+                            <div className="flex-1 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="text-[8px] font-bold uppercase tracking-widest text-white/30 ml-1">Preview: Node Popup Panel</div>
+                                <div className="text-[8px] font-bold uppercase tracking-widest text-white/20 italic">Max 12 Slots</div>
+                              </div>
+                              
+                              <div className="p-6 bg-black/40 border border-white/10 rounded-3xl flex gap-6 relative overflow-hidden group/preview">
+                                {/* Grid Background */}
+                                <div className="absolute inset-0 opacity-[0.02] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+                                
+                                {/* Ratio Grid */}
+                                <div className="flex-1 flex flex-col">
+                                  <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    onDragStart={(e) => setActiveDragId(e.active.id as string)}
+                                    onDragEnd={(e) => {
+                                      setActiveDragId(null);
+                                      const { active, over } = e;
+                                      if (!over || active.id === over.id) return;
+
+                                      const layout = imageConfigTab === 'GLOBAL' 
+                                        ? [...(localGlobalDefaults.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout)]
+                                        : [...(localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout)];
+                                      
+                                      const oldIndex = layout.indexOf(active.id as string);
+                                      const newIndex = layout.indexOf(over.id as string);
+                                      
+                                      const newLayout = arrayMove(layout, oldIndex, newIndex);
+                                      
+                                      if (imageConfigTab === 'GLOBAL') {
+                                        setLocalGlobalDefaults({
+                                          ...localGlobalDefaults,
+                                          imageConfig: { ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), ratioLayout: newLayout }
+                                        });
+                                      } else {
+                                        setLocalModelOverrides({
+                                          ...localModelOverrides,
+                                          [imageConfigTab]: {
+                                            ...localModelOverrides[imageConfigTab],
+                                            imageConfig: { ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), ratioLayout: newLayout }
+                                          }
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    <SortableContext
+                                      items={imageConfigTab === 'GLOBAL' ? (localGlobalDefaults.imageConfig?.ratioLayout || []) : localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || []}
+                                      strategy={rectSortingStrategy}
+                                    >
+                                      <div className="grid grid-cols-4 gap-3">
+                                        {(imageConfigTab === 'GLOBAL' ? (localGlobalDefaults.imageConfig?.ratioLayout || []) : localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || []).map(ratio => (
+                                          <SortableRatioItem
+                                            key={ratio}
+                                            id={ratio}
+                                            ratio={ratio}
+                                            isDefault={(imageConfigTab === 'GLOBAL' ? localGlobalDefaults.imageConfig?.defaultRatio : localModelOverrides[imageConfigTab]?.imageConfig?.defaultRatio) === ratio}
+                                            onSetDefault={() => {
+                                              if (imageConfigTab === 'GLOBAL') {
+                                                setLocalGlobalDefaults({
+                                                  ...localGlobalDefaults,
+                                                  imageConfig: { ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), defaultRatio: ratio }
+                                                });
+                                              } else {
+                                                setLocalModelOverrides({
+                                                  ...localModelOverrides,
+                                                  [imageConfigTab]: {
+                                                    ...localModelOverrides[imageConfigTab],
+                                                    imageConfig: { ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), defaultRatio: ratio }
+                                                  }
+                                                });
+                                              }
+                                            }}
+                                            onRemove={() => {
+                                              if (imageConfigTab === 'GLOBAL') {
+                                                setLocalGlobalDefaults({
+                                                  ...localGlobalDefaults,
+                                                  imageConfig: { 
+                                                    ...(localGlobalDefaults.imageConfig || DEFAULT_IMAGE_CONFIG), 
+                                                    ratioLayout: (localGlobalDefaults.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout).filter(r => r !== ratio) 
+                                                  }
+                                                });
+                                              } else {
+                                                setLocalModelOverrides({
+                                                  ...localModelOverrides,
+                                                  [imageConfigTab]: {
+                                                    ...localModelOverrides[imageConfigTab],
+                                                    imageConfig: { 
+                                                      ...(localModelOverrides[imageConfigTab]?.imageConfig || DEFAULT_IMAGE_CONFIG), 
+                                                      ratioLayout: (localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout || DEFAULT_IMAGE_CONFIG.ratioLayout).filter(r => r !== ratio) 
+                                                    }
+                                                  }
+                                                });
+                                              }
+                                            }}
+                                          />
+                                        ))}
+                                        {/* Empty slots placeholders */}
+                                        {Array.from({ length: 12 - (imageConfigTab === 'GLOBAL' ? (localGlobalDefaults.imageConfig?.ratioLayout?.length || 0) : localModelOverrides[imageConfigTab]?.imageConfig?.ratioLayout?.length || 0) }).map((_, i) => (
+                                          <div key={`empty-${i}`} className="aspect-square rounded-xl border border-dashed border-white/5 bg-white/[0.01]" />
+                                        ))}
+                                      </div>
+                                    </SortableContext>
+                                  </DndContext>
+                                  <div className="text-[8px] font-bold uppercase tracking-widest text-white/20 text-center mt-auto pt-4">Ratio Grid (3x4 Flow)</div>
+                                </div>
+
+                                {/* Divider */}
+                                <div className="w-px bg-white/10 self-stretch" />
+
+                                {/* Quality List */}
+                                <div className="w-20 flex flex-col">
+                                  <div className="flex flex-col gap-2">
+                                    {[...SUPPORTED_QUALITIES].reverse().map(q => {
+                                      const isDefault = (imageConfigTab === 'GLOBAL' ? localGlobalDefaults.imageConfig?.defaultQuality : localModelOverrides[imageConfigTab]?.imageConfig?.defaultQuality) === q;
+                                      return (
+                                        <div
+                                          key={q}
+                                          className={clsx(
+                                            "px-2 py-3 rounded-lg border text-[9px] font-bold text-center transition-all",
+                                            isDefault ? "border-[var(--brand-red)] bg-[var(--brand-red)]/5 text-[var(--brand-red)]" : "border-white/5 bg-white/5 text-white/40"
+                                          )}
+                                        >
+                                          {q}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="text-[8px] font-bold uppercase tracking-widest text-white/20 text-center mt-auto pt-4">Quality</div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 text-[8px] text-white/20 italic ml-2">
+                                <ArrowRightLeft size={10} /> Empty slots auto-collapse in the actual node UI.
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </section>
                   </div>

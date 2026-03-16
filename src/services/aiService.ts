@@ -8,6 +8,7 @@ export interface AIServiceRequest {
   isDemoMode?: boolean;
   aspectRatio?: string;
   imageSize?: string;
+  resolution?: string;
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'off';
   thoughtSignature?: string;
 }
@@ -141,6 +142,124 @@ export const aiService = {
       } catch (e2) {
         return url;
       }
+    }
+  },
+
+  async generateVideo(request: AIServiceRequest & { duration?: string }): Promise<{ operationName: string; error?: string }> {
+    const { provider, modelId, prompt = "", images, aspectRatio, resolution, duration } = request;
+    
+    // Use v1beta for veo-3.1
+    const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:predictLongRunning?key=${provider.apiKey}`;
+    
+    const instance: any = {
+      prompt: prompt || " "
+    };
+
+    if (images && images.length > 0) {
+      instance.referenceImages = images.map(img => ({
+        image: {
+          inlineData: {
+            mimeType: img.mimeType,
+            data: img.data.split(',')[1] || img.data
+          }
+        },
+        referenceType: "asset"
+      }));
+    }
+
+    const body = {
+      instances: [instance],
+      parameters: {
+        aspectRatio: aspectRatio || '16:9',
+        resolution: resolution || '720p',
+        durationSeconds: duration || '8'
+      }
+    };
+
+    try {
+      const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl,
+          method: 'POST',
+          body: body
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { operationName: '', error: `Video generation request failed: ${errorText}` };
+      }
+
+      const data = await response.json();
+      if (data.error) {
+        return { operationName: '', error: data.error.message || JSON.stringify(data.error) };
+      }
+
+      return { operationName: data.name };
+    } catch (err: any) {
+      return { operationName: '', error: err.message };
+    }
+  },
+
+  async pollVideoOperation(operationName: string, apiKey: string): Promise<{ done: boolean; videoUri?: string; error?: string }> {
+    const targetUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${apiKey}`;
+    
+    try {
+      const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl,
+          method: 'GET'
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { done: false, error: `Polling failed: ${errorText}` };
+      }
+
+      const data = await response.json();
+      if (data.error) {
+        return { done: true, error: data.error.message || JSON.stringify(data.error) };
+      }
+
+      if (data.done) {
+        const videoUri = data.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+        return { done: true, videoUri };
+      }
+
+      return { done: false };
+    } catch (err: any) {
+      return { done: false, error: err.message };
+    }
+  },
+
+  async downloadVideoAsBlob(videoUri: string, apiKey: string): Promise<string> {
+    try {
+      const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: videoUri,
+          method: 'GET',
+          headers: {
+            'x-goog-api-key': apiKey
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to download video: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      console.error('Error downloading video as blob:', err);
+      return videoUri; // Fallback to original URI
     }
   },
 

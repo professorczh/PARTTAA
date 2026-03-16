@@ -9,8 +9,8 @@ import { resolvePrompt } from './utils/promptResolver';
 import { useReactFlow } from '@xyflow/react';
 import { aiService } from './services/aiService';
 
-import { RatioIcon } from './components/RatioIcon';
-import { Maximize, Minimize } from 'lucide-react';
+import { Maximize, Minimize, ArrowRightLeft } from 'lucide-react';
+import { SUPPORTED_RATIOS, SUPPORTED_QUALITIES, DEFAULT_RATIO_LAYOUT, SUPPORTED_VIDEO_RATIOS, SUPPORTED_VIDEO_RESOLUTIONS, SUPPORTED_VIDEO_DURATIONS } from './constants';
 
 interface NodePromptInputProps {
   node: TapNode;
@@ -21,27 +21,6 @@ interface NodePromptInputProps {
 }
 
 type ViewMode = 'edit' | 'prev' | 'raw';
-
-const RATIOS = [
-  { label: '5:4', value: '5:4' },
-  { label: '4:5', value: '4:5' },
-  { label: '21:9', value: '21:9' },
-  { label: '4:3', value: '4:3' },
-  { label: '3:4', value: '3:4' },
-  { label: '3:2', value: '3:2' },
-  { label: '2:3', value: '2:3' },
-  { label: 'Auto', value: 'auto' },
-  { label: '1:1', value: '1:1' },
-  { label: '16:9', value: '16:9' },
-  { label: '9:16', value: '9:16' },
-];
-
-const SIZES = [
-  { label: '4K', value: '4K' },
-  { label: '2K', value: '2K' },
-  { label: '1K', value: '1K' },
-  { label: '512P', value: '512px' },
-];
 
 export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChange }: NodePromptInputProps) => {
   const [prompt, setPrompt] = useState(node.data.prompt || '');
@@ -61,6 +40,13 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   const setSkipDeleteConfirm = useTapStore((state) => state.setSkipDeleteConfirm);
   const skipOverwriteConfirm = useTapStore((state) => state.skipOverwriteConfirm);
   const setSkipOverwriteConfirm = useTapStore((state) => state.setSkipOverwriteConfirm);
+  const modelOverrides = useTapStore((state) => state.modelOverrides);
+  const autoFocusPrompt = useTapStore((state) => state.autoFocusPrompt);
+  const promptPanelWidth = useTapStore((state) => state.promptPanelWidth);
+  const autoExpandOnSelect = useTapStore((state) => state.autoExpandOnSelect);
+  const autoExpandText = useTapStore((state) => state.autoExpandText);
+  const autoExpandImage = useTapStore((state) => state.autoExpandImage);
+  const autoExpandVideo = useTapStore((state) => state.autoExpandVideo);
 
   const { screenToFlowPosition, flowToScreenPosition, getNodes, getEdges, updateNode } = useReactFlow();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -115,17 +101,25 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
 
   const [activeDropdown, setActiveDropdown] = useState<'model' | 'mention' | 'settings' | 'thinking' | null>(null);
 
+  // Consolidated Click-Away Logic
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      if (!activeDropdown) return;
+
       const target = event.target as HTMLElement;
-      if (!target.closest('.dropdown-container') && !target.closest('.dropdown-trigger')) {
+      
+      // Check if click is inside a dropdown container or its trigger
+      const isDropdownClick = target.closest('.dropdown-container');
+      const isTriggerClick = target.closest('.dropdown-trigger');
+      
+      // If click is outside both, close the dropdown
+      if (!isDropdownClick && !isTriggerClick) {
         setActiveDropdown(null);
       }
     };
 
-    if (activeDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+    // Use mousedown for faster response
+    document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
@@ -147,38 +141,30 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     onExpandChange?.(expanded);
   };
 
-  // Reset expansion and dropdowns when node is deselected
+  // Handle expansion based on selection and settings
   useEffect(() => {
-    if (!selected) {
+    if (selected) {
+      const isText = node.type === 'text-node';
+      const isImage = node.type === 'image-node';
+      const isVideo = node.type === 'video-node';
+      
+      const shouldExpand = autoExpandOnSelect && (
+        (isText && autoExpandText) ||
+        (isImage && autoExpandImage) ||
+        (isVideo && autoExpandVideo)
+      );
+      
+      if (shouldExpand) {
+        setExpanded(true);
+      } else {
+        setExpanded(false);
+      }
+    } else {
       setExpanded(false);
       setActiveDropdown(null);
     }
-  }, [selected]);
+  }, [selected, node.type, autoExpandOnSelect, autoExpandText, autoExpandImage, autoExpandVideo]);
 
-  // Close dropdowns when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      // If no dropdown is active, do nothing
-      if (!activeDropdown) return;
-
-      // Check if click is inside the dropdown or the trigger buttons
-      const target = e.target as HTMLElement;
-      const isDropdownClick = target.closest('.dropdown-container');
-      const isTriggerClick = target.closest('.dropdown-trigger');
-
-      if (!isDropdownClick && !isTriggerClick) {
-        setActiveDropdown(null);
-      }
-    };
-
-    if (activeDropdown) {
-      window.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      window.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [activeDropdown]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isSelectingRef = useRef(false);
 
@@ -303,8 +289,28 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     setShowConfirmModal(false);
   };
 
+  // Helper to get aspect ratio box style
+  const getRatioStyle = (r: string) => {
+    if (!r || typeof r !== 'string') return { width: '14px', height: '14px' };
+    const parts = r.split(':');
+    if (parts.length !== 2) return { width: '14px', height: '14px' };
+    const [w, h] = parts.map(Number);
+    if (isNaN(w) || isNaN(h) || w === 0 || h === 0) return { width: '14px', height: '14px' };
+    
+    if (w > h) return { width: '16px', height: `${(h / w) * 16}px` };
+    if (h > w) return { width: `${(w / h) * 16}px`, height: '16px' };
+    return { width: '14px', height: '14px' };
+  };
+
   const handleSend = async () => {
     if (isGenerating) return;
+
+    // Priority 1: If an external onRun is provided, use it.
+    // This ensures that nodes like TextNode, ImageNode, VideoNode can handle their own logic.
+    if (onRun) {
+      onRun();
+      return;
+    }
     
     if (node.type === 'image-node') {
       const uploadedImages = node.data.uploadedImages || [];
@@ -610,8 +616,23 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
       const m = p?.models.find(m => m.id === mId);
       if (p && m && p.enabled && m.enabled) return { provider: p, model: m };
     }
+
+    // Fallback for demo mode
+    if (isDemoMode) {
+      const type = node.type === 'image-node' ? 'image' : node.type === 'video-node' ? 'video' : 'text';
+      return {
+        provider: { id: 'demo', name: 'Demo Provider', type: 'mock', enabled: true, models: [], defaultProtocol: 'json', apiKey: '' } as any,
+        model: { 
+          id: `demo-${type}-model`, 
+          name: `Demo ${type.charAt(0).toUpperCase() + type.slice(1)} Model`, 
+          enabled: true, 
+          capabilities: { [type]: true } 
+        }
+      };
+    }
+
     return availableModels[0] || null;
-  }, [node.data.config?.model, node.data.activeOutputMode, globalDefaults, availableModels, providers]);
+  }, [node.data.config?.model, node.data.activeOutputMode, globalDefaults, availableModels, providers, isDemoMode]);
 
   const performDeletion = (nodeId: string, mentionText: string) => {
     // Remove mention from prompt
@@ -640,20 +661,63 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     }
   };
 
+  const shortenModelName = (name: string) => {
+    if (!name) return '';
+    return name.replace('Veo 3.1 Fast', 'Veo 3.1').replace('Gemini 2.5 Flash', 'Gemini 2.5');
+  };
+
   const handleModelSelect = (pId: string, mId: string) => {
-    updateNodeData(node.id, { config: { ...node.data.config, model: `${pId}:${mId}` } });
+    updateNodeData(node.id, { config: { ...(node.data.config || {}), model: `${pId}:${mId}` } });
     setActiveDropdown(null);
   };
 
-  const currentRatio = node.data.config?.aspectRatio || '1:1';
-  const currentSize = node.data.config?.imageSize || '1K';
+  const currentModelKey = node.data.config?.model || (globalDefaults?.[(node.data.activeOutputMode || 'text') as keyof typeof globalDefaults] as string) || '';
+  
+  const imageConfig = useMemo(() => {
+    if (node.data.activeOutputMode !== 'image') return globalDefaults?.imageConfig || { defaultRatio: '1:1', defaultQuality: '1K', ratioLayout: [] };
+    return modelOverrides[currentModelKey]?.imageConfig || globalDefaults?.imageConfig || { defaultRatio: '1:1', defaultQuality: '1K', ratioLayout: [] };
+  }, [currentModelKey, modelOverrides, globalDefaults?.imageConfig, node.data.activeOutputMode]);
+
+  const inheritedRatio = useMemo(() => {
+    // Find first parent with an image output or uploaded image
+    const imageParent = parentNodes.find(n => n.data.outputs?.image || n.data.uploadedImages?.[0]);
+    if (!imageParent) return null;
+    
+    // Try to get ratio from parent's config or metadata
+    return imageParent.data.config?.aspectRatio || '1:1';
+  }, [parentNodes]);
+
+  const currentRatio = node.data.config?.aspectRatio || inheritedRatio || imageConfig?.defaultRatio || '1:1';
+  const isInherited = !node.data.config?.aspectRatio && !!inheritedRatio;
+  const currentSize = node.data.config?.imageSize || imageConfig?.defaultQuality || '1K';
+
+  const currentVideoRatio = node.data.config?.videoAspectRatio || '16:9';
+  const currentVideoResolution = node.data.config?.videoResolution || '1080p';
+  const currentVideoDuration = node.data.config?.videoDuration || '8';
 
   const handleRatioSelect = (ratio: string) => {
-    updateNodeData(node.id, { config: { ...node.data.config, aspectRatio: ratio } });
+    // If selecting the same ratio that is already inherited, we can just clear the manual override
+    if (ratio === inheritedRatio) {
+      updateNodeData(node.id, { config: { ...(node.data.config || {}), aspectRatio: undefined } });
+    } else {
+      updateNodeData(node.id, { config: { ...(node.data.config || {}), aspectRatio: ratio } });
+    }
   };
 
   const handleSizeSelect = (size: string) => {
-    updateNodeData(node.id, { config: { ...node.data.config, imageSize: size } });
+    updateNodeData(node.id, { config: { ...(node.data.config || {}), imageSize: size } });
+  };
+
+  const handleVideoRatioSelect = (ratio: string) => {
+    updateNodeData(node.id, { config: { ...(node.data.config || {}), videoAspectRatio: ratio } });
+  };
+
+  const handleVideoResolutionSelect = (res: string) => {
+    updateNodeData(node.id, { config: { ...(node.data.config || {}), videoResolution: res } });
+  };
+
+  const handleVideoDurationSelect = (dur: string) => {
+    updateNodeData(node.id, { config: { ...(node.data.config || {}), videoDuration: dur } });
   };
 
   const handleTypeSelect = (mode: 'text' | 'image' | 'video') => {
@@ -668,8 +732,11 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   // All nodes now use the "Drawer" mode (hiding behind the node)
   const isDrawerMode = isTextNode || isImageNode || isVideoNode;
   
-  // TextNode collapses on hover-out, Image/Video nodes collapse on Shift (but not if focused)
-  const isCollapsed = isTextNode ? !isExpanded : (isShiftPressed && !isFocused);
+  // All nodes now follow the isExpanded state for collapse/expand behavior
+  const isCollapsed = !isExpanded;
+
+  const collapsedWidth = 320;
+  const targetWidth = isCollapsed ? collapsedWidth : promptPanelWidth;
 
   if (!selected) return null;
 
@@ -677,19 +744,26 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     <>
       {/* Layer 1: The Drawer (Behind Node Body) */}
       <motion.div
-        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20, x: "-50%", width: collapsedWidth }}
         animate={{ 
           opacity: 1, 
           y: isDrawerMode 
             ? (isCollapsed ? -284 : (isPinned ? -15 : 0))
             : (isPinned ? -15 : 0),
-          zIndex: 0 // Always behind node body (z-10)
+          zIndex: 0, // Always behind node body (z-10)
+          width: targetWidth,
+          x: "-50%"
         }}
-        transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 1 }}
+        transition={{ 
+          type: 'spring', 
+          stiffness: 250, 
+          damping: 50,
+          mass: 1 
+        }}
         onMouseEnter={() => setExpanded(true)}
-        exit={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        exit={{ opacity: 0, y: isDrawerMode ? -340 : 20, x: "-50%", width: collapsedWidth }}
         className={cn(
-          "absolute left-0 w-full pointer-events-auto",
+          "absolute left-1/2 pointer-events-auto",
           (isCollapsed || isPinned) ? "top-full" : "top-[calc(100%+8px)]"
         )}
       >
@@ -851,7 +925,7 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                     currentNodeId={node.id}
                     placeholder="Enter instructions... (Type @ to reference)"
                     onEnter={handleSend}
-                    autoFocus={selected}
+                    autoFocus={selected && autoFocusPrompt && nodes.filter(n => n.selected).length === 1}
                     onFocus={() => setIsFocused(true)}
                     onBlur={() => setIsFocused(false)}
                   />
@@ -886,7 +960,7 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                 <div className="relative">
                   <button 
                     onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'model' ? null : 'model'); }}
-                    className="w-[140px] flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger"
+                    className="min-w-[140px] flex-1 flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger"
                   >
                     <Hash size={12} className="text-[var(--brand-red)] flex-shrink-0" />
                     <span className="flex-1 text-center truncate px-1">{currentModel ? (currentModel.model.name || currentModel.model.id) : 'Select Model'}</span>
@@ -955,22 +1029,41 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                     <button 
                       onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'settings' ? null : 'settings'); }}
                       className={cn(
-                        "w-[110px] flex items-center px-0 py-1.5 rounded-lg hover:bg-white/10 text-[10px] font-mono font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger",
+                        node.data.activeOutputMode === 'video' ? "w-[150px]" : "w-[110px]",
+                        "flex items-center px-0 py-1.5 rounded-lg hover:bg-white/10 text-[10px] font-mono font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger",
                         activeDropdown === 'settings' && "bg-white/10 border-white/20"
                       )}
                     >
-                      <div className="w-[28px] flex justify-center flex-shrink-0">
-                        <RatioIcon ratio={currentRatio} size={14} className="text-white/70" />
+                      <div className="w-[28px] flex justify-center flex-shrink-0 relative">
+                        <div 
+                          className="border border-white/60 rounded-[1px]" 
+                          style={getRatioStyle(node.data.activeOutputMode === 'video' ? currentVideoRatio : currentRatio)} 
+                        />
+                        {node.data.activeOutputMode === 'image' && isInherited && (
+                          <div className="absolute -top-1 -right-1 bg-blue-500 rounded-full p-0.5 shadow-sm">
+                            <ArrowRightLeft size={6} className="text-white" />
+                          </div>
+                        )}
                       </div>
                       <div className="w-[32px] flex justify-center flex-shrink-0">
-                        {currentRatio}
+                        {node.data.activeOutputMode === 'video' ? currentVideoRatio : currentRatio}
                       </div>
                       <div className="w-[12px] flex justify-center flex-shrink-0 opacity-30">
                         ·
                       </div>
                       <div className="w-[38px] flex justify-center flex-shrink-0">
-                        {SIZES.find(s => s.value === currentSize)?.label || currentSize}
+                        {node.data.activeOutputMode === 'video' ? currentVideoResolution : currentSize}
                       </div>
+                      {node.data.activeOutputMode === 'video' && (
+                        <>
+                          <div className="w-[12px] flex justify-center flex-shrink-0 opacity-30">
+                            ·
+                          </div>
+                          <div className="w-[28px] flex justify-center flex-shrink-0">
+                            {currentVideoDuration}s
+                          </div>
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -1034,17 +1127,24 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
 
       {/* Layer 2: The Overlays (In Front of Node Body) */}
       <motion.div
-        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20, x: "-50%", width: collapsedWidth }}
         animate={{ 
           opacity: 1, 
           y: isDrawerMode 
             ? (isCollapsed ? -284 : (isPinned ? -15 : 0))
             : (isPinned ? -15 : 0),
-          zIndex: 120 // In front of node body (z-10)
+          zIndex: 120, // In front of node body (z-10)
+          width: targetWidth,
+          x: "-50%"
         }}
-        transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 1 }}
+        transition={{ 
+          type: 'spring', 
+          stiffness: 250, 
+          damping: 50, 
+          mass: 1 
+        }}
         className={cn(
-          "absolute left-0 w-full pointer-events-none", // pointer-events-none so it doesn't block Layer 1
+          "absolute left-1/2 pointer-events-none", // pointer-events-none so it doesn't block Layer 1
           (isCollapsed || isPinned) ? "top-full" : "top-[calc(100%+8px)]"
         )}
       >
@@ -1086,7 +1186,7 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                                     >
                                       <div className="flex items-center justify-between">
                                         <span className="font-bold truncate max-w-[140px]">
-                                          {model.name || model.id}
+                                          {shortenModelName(model.name || model.id)}
                                         </span>
                                         {isSelected && <Check size={10} />}
                                       </div>
@@ -1162,113 +1262,163 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                           className="absolute bottom-full right-0 mb-10 w-[320px] bg-[#1a1a1a]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-[120] overflow-hidden p-3 dropdown-container pointer-events-auto"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="flex gap-3">
-                            {/* Ratio Section (Left) */}
-                            <div className="flex-1 flex flex-col">
-                              <div className="grid grid-cols-4 gap-1 mb-1.5">
-                                {/* Row 1: 3 items (5:4, 4:5, 21:9) */}
-                                {RATIOS.slice(0, 3).map((ratio) => (
-                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
-                                    <button
-                                      onClick={() => handleRatioSelect(ratio.value)}
-                                      className={cn(
-                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
-                                        currentRatio === ratio.value 
-                                          ? "bg-white/10 border-white/20 text-white" 
-                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
-                                      )}
-                                    >
-                                      <RatioIcon ratio={ratio.value} size={14} />
-                                    </button>
-                                    <span className={cn(
-                                      "text-[7px] font-medium transition-colors",
-                                      currentRatio === ratio.value ? "text-white/70" : "text-white/20"
-                                    )}>
-                                      {ratio.label}
-                                    </span>
-                                  </div>
-                                ))}
-                                <div /> {/* Empty cell for 4th column in Row 1 */}
+                          {node.data.activeOutputMode === 'image' ? (
+                            <div className="flex gap-3">
+                              {/* Ratio Section (Left) */}
+                              <div className="flex-1 flex flex-col">
+                                <div className={cn(
+                                  "grid gap-1 mb-1.5",
+                                  imageConfig.ratioLayout.length <= 4 ? "grid-cols-4" : 
+                                  imageConfig.ratioLayout.length <= 8 ? "grid-cols-4" : "grid-cols-4"
+                                )}>
+                                  {imageConfig.ratioLayout.map((ratio) => {
+                                    const isSelected = currentRatio === ratio;
+                                    const isActuallyInherited = isInherited && isSelected;
 
-                                {/* Row 2: 4 items (4:3, 3:4, 3:2, 2:3) */}
-                                {RATIOS.slice(3, 7).map((ratio) => (
-                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
-                                    <button
-                                      onClick={() => handleRatioSelect(ratio.value)}
-                                      className={cn(
-                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
-                                        currentRatio === ratio.value 
-                                          ? "bg-white/10 border-white/20 text-white" 
-                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
-                                      )}
-                                    >
-                                      <RatioIcon ratio={ratio.value} size={14} />
-                                    </button>
-                                    <span className={cn(
-                                      "text-[7px] font-medium transition-colors",
-                                      currentRatio === ratio.value ? "text-white/70" : "text-white/20"
-                                    )}>
-                                      {ratio.label}
-                                    </span>
-                                  </div>
-                                ))}
-
-                                {/* Row 3: 4 items (AUTO, 1:1, 16:9, 9:16) */}
-                                {RATIOS.slice(7, 11).map((ratio) => (
-                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
-                                    <button
-                                      onClick={() => handleRatioSelect(ratio.value)}
-                                      className={cn(
-                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
-                                        currentRatio === ratio.value 
-                                          ? "bg-white/10 border-white/20 text-white" 
-                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
-                                      )}
-                                    >
-                                      {ratio.value === 'auto' ? (
-                                        <div className="relative w-3 h-3 border border-dashed border-current rounded-sm">
-                                          <div className="absolute inset-0.5 border border-current rounded-[1px]" />
-                                        </div>
-                                      ) : (
-                                        <RatioIcon ratio={ratio.value} size={14} />
-                                      )}
-                                    </button>
-                                    <span className={cn(
-                                      "text-[7px] font-medium transition-colors",
-                                      currentRatio === ratio.value ? "text-white/70" : "text-white/20"
-                                    )}>
-                                      {ratio.label}
-                                    </span>
-                                  </div>
-                                ))}
+                                    return (
+                                      <div key={ratio} className="flex flex-col items-center gap-0.5">
+                                        <button
+                                          onClick={() => handleRatioSelect(ratio)}
+                                          className={cn(
+                                            "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border relative",
+                                            isSelected 
+                                              ? "bg-white/10 border-white/20 text-white" 
+                                              : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                          )}
+                                        >
+                                          <div 
+                                            className={cn("border rounded-[1px]", isSelected ? "border-white/60" : "border-white/30")} 
+                                            style={getRatioStyle(ratio)} 
+                                          />
+                                          {isActuallyInherited && (
+                                            <div className="absolute -top-1 -right-1 bg-blue-500 rounded-full p-0.5 shadow-sm">
+                                              <ArrowRightLeft size={6} className="text-white" />
+                                            </div>
+                                          )}
+                                        </button>
+                                        <span className={cn(
+                                          "text-[7px] font-medium transition-colors",
+                                          isSelected ? "text-white/70" : "text-white/20"
+                                        )}>
+                                          {ratio}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-auto pt-1">Ratio</div>
                               </div>
-                              <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-0.5">Ratio</div>
-                            </div>
 
-                            {/* Divider */}
-                            <div className="w-px bg-white/10 self-stretch" />
+                              {/* Divider */}
+                              <div className="w-px bg-white/10 self-stretch" />
 
-                            {/* Quality Section (Right) */}
-                            <div className="w-14 flex flex-col justify-end">
-                              <div className="flex flex-col gap-1 mb-1.5">
-                                {SIZES.map((size) => (
-                                  <button
-                                    key={size.value}
-                                    onClick={() => handleSizeSelect(size.value)}
-                                    className={cn(
-                                      "w-full py-1 text-[10px] font-bold rounded-lg transition-all border",
-                                      currentSize === size.value 
-                                        ? "bg-white/10 border-white/20 text-white shadow-sm" 
-                                        : "bg-transparent border-transparent text-white/30 hover:text-white/50"
-                                    )}
-                                  >
-                                    {size.label}
-                                  </button>
-                                ))}
+                              {/* Quality Section (Right) */}
+                              <div className="w-14 flex flex-col">
+                                <div className="flex flex-col gap-1 mb-1.5">
+                                  {SUPPORTED_QUALITIES.map((size) => (
+                                    <button
+                                      key={size}
+                                      onClick={() => handleSizeSelect(size)}
+                                      className={cn(
+                                        "w-full py-1 text-[10px] font-bold rounded-lg transition-all border",
+                                        currentSize === size 
+                                          ? "bg-white/10 border-white/20 text-white shadow-sm" 
+                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                      )}
+                                    >
+                                      {size}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest text-center mt-auto pt-1">Quality</div>
                               </div>
-                              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest text-center">Quality</div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="flex gap-3">
+                              {/* Video Ratio Section */}
+                              <div className="flex-1 flex flex-col">
+                                <div className="grid grid-cols-2 gap-2 mb-1.5">
+                                  {SUPPORTED_VIDEO_RATIOS.map((ratio) => {
+                                    const isSelected = currentVideoRatio === ratio;
+                                    return (
+                                      <div key={ratio} className="flex flex-col items-center gap-0.5">
+                                        <button
+                                          onClick={() => handleVideoRatioSelect(ratio)}
+                                          className={cn(
+                                            "w-full h-[36px] rounded-lg flex items-center justify-center transition-all border relative",
+                                            isSelected 
+                                              ? "bg-white/10 border-white/20 text-white" 
+                                              : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                          )}
+                                        >
+                                          <div 
+                                            className={cn("border rounded-[1px]", isSelected ? "border-white/60" : "border-white/30")} 
+                                            style={getRatioStyle(ratio)} 
+                                          />
+                                        </button>
+                                        <span className={cn(
+                                          "text-[7px] font-medium transition-colors",
+                                          isSelected ? "text-white/70" : "text-white/20"
+                                        )}>
+                                          {ratio}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-auto pt-1">Ratio</div>
+                              </div>
+
+                              {/* Divider */}
+                              <div className="w-px bg-white/10 self-stretch" />
+
+                              {/* Video Resolution Section */}
+                              <div className="flex-1 flex flex-col">
+                                <div className="grid grid-cols-1 gap-1 mb-1.5">
+                                  {SUPPORTED_VIDEO_RESOLUTIONS.map((res) => (
+                                    <button
+                                      key={res}
+                                      onClick={() => handleVideoResolutionSelect(res)}
+                                      className={cn(
+                                        "w-full py-1 text-[9px] font-bold rounded-lg transition-all border",
+                                        currentVideoResolution === res 
+                                          ? "bg-white/10 border-white/20 text-white shadow-sm" 
+                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                      )}
+                                    >
+                                      {res}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-auto pt-1">Resolution</div>
+                              </div>
+
+                              {/* Divider */}
+                              <div className="w-px bg-white/10 self-stretch" />
+
+                              {/* Video Duration Section */}
+                              <div className="flex-1 flex flex-col">
+                                <div className="grid grid-cols-1 gap-1 mb-1.5">
+                                  {SUPPORTED_VIDEO_DURATIONS.map((dur) => (
+                                    <button
+                                      key={dur}
+                                      onClick={() => handleVideoDurationSelect(dur)}
+                                      className={cn(
+                                        "w-full py-1 text-[9px] font-bold rounded-lg transition-all border",
+                                        currentVideoDuration === dur 
+                                          ? "bg-white/10 border-white/20 text-white shadow-sm" 
+                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                      )}
+                                    >
+                                      {dur}s
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-auto pt-1">Duration</div>
+                              </div>
+
+                            </div>
+                          )}
                         </motion.div>
                       )}
                     </AnimatePresence>

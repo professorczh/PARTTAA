@@ -6,7 +6,7 @@ import './index.css';
 // Handle global errors
 window.addEventListener('error', (event) => {
   // Suppress ResizeObserver loop errors
-  if (event.message?.includes('ResizeObserver loop')) {
+  if (event.message?.includes('ResizeObserver loop') || event.message?.includes('ResizeObserver loop completed')) {
     event.stopImmediatePropagation();
     return;
   }
@@ -23,7 +23,7 @@ window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason?.message || String(event.reason);
   
   // Suppress ResizeObserver loop errors
-  if (message.includes('ResizeObserver loop')) {
+  if (message.includes('ResizeObserver loop') || message.includes('ResizeObserver loop completed')) {
     event.stopImmediatePropagation();
     event.preventDefault();
     return;

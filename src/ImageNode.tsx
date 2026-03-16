@@ -4,11 +4,12 @@ import { useTapStore, TapNode, UploadedImage, Pin } from './store';
 import { useShallow } from 'zustand/react/shallow';
 import { ImageIcon, ArrowUp, X, Play, Loader2, Eye, Edit3, Terminal, Check, Trash2, Plus, Link as LinkIcon, CornerDownRight } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
+import { SUPPORTED_RATIOS, SUPPORTED_QUALITIES } from './constants';
 import { NodeMetadata } from './components/NodeMetadata';
 import { EditableTitle } from './components/EditableTitle';
 import { aiService } from './services/aiService';
 import { resolvePrompt } from './utils/promptResolver';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { MagneticPort, MagneticInput } from './components/MagneticPorts';
@@ -22,7 +23,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   
-  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode, pinTargetNodeId, addPinWithTarget, providers, globalDefaults, isDemoMode, addHistoryItem, showMetadata } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, modelOverrides, isRecognitionMode, pinTargetNodeId, addPinWithTarget, providers, globalDefaults, isDemoMode, addHistoryItem, showMetadata } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     addUploadedImage: state.addUploadedImage,
     removeUploadedImage: state.removeUploadedImage,
@@ -38,6 +39,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     setEdges: state.setEdges,
     edges: state.edges,
     nodes: state.nodes,
+    modelOverrides: state.modelOverrides,
     isRecognitionMode: state.isRecognitionMode,
     pinTargetNodeId: state.pinTargetNodeId,
     addPinWithTarget: state.addPinWithTarget,
@@ -121,18 +123,18 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       const realRes = `${img.naturalWidth} x ${img.naturalHeight}`;
       const endTime = Date.now();
       
-      // We can access data.metadata.startTime here because it's in the component's scope
-      // but it's safer to just calculate duration if we can.
-      // Actually, since updateNodeData now merges, we only need to send the changes.
+      // STOPWATCH LOGIC: Calculate final duration based on the original startTime
       const startTime = data.metadata?.startTime;
+      const modelName = data.metadata?.modelName;
       const duration = startTime ? (endTime - startTime) / 1000 : undefined;
 
       updateNodeData(id, { 
         isLoading: false,
         metadata: { 
+          modelName, 
           resolution: realRes,
-          duration,
-          startTime: undefined // Clear it
+          duration, // The "Pause" value
+          startTime: undefined // Put down the stopwatch
         } 
       });
     }
@@ -146,57 +148,23 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
     const ratio = img.naturalHeight / img.naturalWidth;
 
-    setTimeout(() => {
-      const nodeElement = document.querySelector(`[data-id="${id}"]`) as HTMLElement;
-      const currentWidth = nodeElement?.offsetWidth || 360;
-      
-      const updateHeight = () => {
-        setNodes((nds) => nds.map((node) => {
-          if (node.id === id) {
-            const headerHeight = 40;
-            const verticalPadding = 24; // p-3 top and bottom
-            const horizontalPadding = 24; // p-3 left and right
-            const borderWeight = 2; // 1px border on each side
-            const elementGap = 12; // gap-3 is 12px
-            
-            const historyHeight = history.length > 0 ? 50 : 0; // 50px thumb height
-            
-            // Metadata height calculation
-            const hasMetadata = showMetadata && (data.isLoading || data.metadata?.modelName || data.metadata?.resolution || data.metadata?.duration);
-            const metadataHeight = hasMetadata ? 20 : 0; // NodeMetadata is approx 20px
-            
-            // Count active gaps in the flex container
-            let activeGaps = 0;
-            if (history.length > 0) activeGaps++; // Gap between image and history
-            if (hasMetadata) activeGaps++; // Gap between history/image and metadata
-            activeGaps++; // Always a gap between header and image content
-            
-            const totalGapHeight = activeGaps * elementGap;
-            
-            // Calculate the height of the image based on the actual inner width
-            const imageContainerBorder = 2; // 1px border on each side of the image container
-            const innerWidth = currentWidth - horizontalPadding - borderWeight - imageContainerBorder;
-            const imageHeight = Math.ceil(innerWidth * ratio);
-            
-            const newHeight = imageHeight + headerHeight + verticalPadding + borderWeight + imageContainerBorder + historyHeight + metadataHeight + totalGapHeight;
-            
-            // Only update if there's a significant difference to prevent ResizeObserver loops
-            const currentHeight = typeof node.style?.height === 'number' ? node.style.height : 0;
-            if (Math.abs(currentHeight - newHeight) < 2 && node.style?.width === currentWidth) return node;
+    // Master Sync: Animate shell to match loaded image dimensions
+    const nodeElement = document.querySelector(`[data-id="${id}"]`) as HTMLElement;
+    if (nodeElement) {
+      const currentWidth = nodeElement.offsetWidth || 320;
+      const totalHeight = calculateNodeHeight(ratio, currentWidth);
+      const startHeight = nodeElement.offsetHeight;
 
-            return {
-              ...node,
-              style: { ...node.style, width: currentWidth, height: newHeight }
-            };
-          }
-          return node;
-        }));
-      };
-
-      // Use requestAnimationFrame to move the update out of the current layout cycle
-      const rafId = requestAnimationFrame(updateHeight);
-      return () => cancelAnimationFrame(rafId);
-    }, 50);
+      animate(startHeight, totalHeight, {
+        duration: 0.5,
+        ease: [0.4, 0, 0.2, 1],
+        onUpdate: (latest) => {
+          setNodes((nds) => nds.map((node) => 
+            node.id === id ? { ...node, style: { ...node.style, height: latest } } : node
+          ));
+        }
+      });
+    }
   };
 
   const onLocalDragOver = (e: React.DragEvent) => {
@@ -238,7 +206,196 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
   const uploadedImages = data.uploadedImages || [];
   const currentOutput = previewImageUrl || data.outputs?.image;
-  const hasContent = currentOutput || uploadedImages.length > 0;
+  const hasContent = !!currentOutput || uploadedImages.length > 0;
+
+  // 0. Constants for layout
+  const MIN_BODY_HEIGHT = 240;
+  const NODE_WIDTH = 320;
+
+  const inheritedRatio = useMemo(() => {
+    // Find first parent with an image output or uploaded image
+    const parentIds = edges
+      .filter(e => e.target === id)
+      .map(e => e.source);
+    const parentNodes = nodes.filter(n => parentIds.includes(n.id));
+    const imageParent = parentNodes.find(n => n.data.outputs?.image || n.data.uploadedImages?.[0]);
+    if (!imageParent) return null;
+    
+    return imageParent.data.config?.aspectRatio || '1:1';
+  }, [id, edges, nodes]);
+
+  const currentModelKey = data.config?.model || (globalDefaults?.['image'] as string) || '';
+  const imageConfig = useMemo(() => {
+    return modelOverrides[currentModelKey]?.imageConfig || globalDefaults?.imageConfig || { defaultRatio: '1:1', defaultQuality: '1K', ratioLayout: [] };
+  }, [currentModelKey, modelOverrides, globalDefaults?.imageConfig]);
+
+  const currentRatio = data.config?.aspectRatio || inheritedRatio || imageConfig.defaultRatio || '1:1';
+  const currentSize = data.config?.imageSize || imageConfig.defaultQuality || '1K';
+
+  // 1. Helper to calculate total node height based on image aspect ratio
+  const calculateNodeHeight = (ratio: number, currentWidth: number, forceLoading = false) => {
+    const headerHeight = 40;
+    const verticalPadding = 24; // p-3 top and bottom
+    const borderWeight = 2; // 1px border
+    const imageContainerBorder = 2; // 1px border
+    const elementGap = 12; // gap-3
+    const bottomBreathingRoom = 16; // Extra space at the bottom to prevent drawer collision
+    
+    const innerWidth = currentWidth - 24 - 2 - 2;
+    const imageHeight = Math.ceil(innerWidth * ratio);
+    
+    // ORCHESTRATION: Always reserve space for history and metadata during loading
+    const hasHistory = (data.history?.length || 0) > 0 || forceLoading || data.isLoading;
+    const historyHeight = hasHistory ? 50 : 0;
+    
+    const hasMetadata = showMetadata && (forceLoading || data.isLoading || data.metadata?.modelName);
+    const metadataHeight = hasMetadata ? 28 : 0;
+    
+    let visibleElements = 1; // ImageContainer
+    if (historyHeight > 0) visibleElements++;
+    if (hasMetadata) visibleElements++;
+    const totalGapHeight = (visibleElements - 1) * elementGap;
+    
+    return imageHeight + headerHeight + verticalPadding + borderWeight + imageContainerBorder + historyHeight + metadataHeight + totalGapHeight + bottomBreathingRoom;
+  };
+
+  // 2. Growth Animation Effect - "Master Nesting"
+  // This effect ensures the node shell grows 1s after loading starts, 
+  // creating a predictable "nest" for the upcoming image.
+  useEffect(() => {
+    if (data.isLoading && !hasContent) {
+      const timer = setTimeout(() => {
+        const nodeElement = document.querySelector(`[data-id="${id}"]`) as HTMLElement;
+        if (nodeElement) {
+          const currentWidth = nodeElement.offsetWidth || 320;
+          
+          // Predict ratio from config
+          const aspectRatio = currentRatio;
+          let expectedWidth = 1024;
+          let expectedHeight = 1024;
+          
+          // Use a helper or mapping for these
+          const ratioConfig = SUPPORTED_RATIOS.find(r => r === aspectRatio);
+          if (ratioConfig) {
+            // Simple heuristic for resolution based on ratio
+            if (aspectRatio === '1:1') { expectedWidth = 1024; expectedHeight = 1024; }
+            else if (aspectRatio === '16:9') { expectedWidth = 1024; expectedHeight = 576; }
+            else if (aspectRatio === '9:16') { expectedWidth = 576; expectedHeight = 1024; }
+            else if (aspectRatio === '4:3') { expectedWidth = 1024; expectedHeight = 768; }
+            else if (aspectRatio === '3:4') { expectedWidth = 768; expectedHeight = 1024; }
+            else if (aspectRatio === '21:9') { expectedWidth = 1024; expectedHeight = 438; }
+            else if (aspectRatio === '3:2') { expectedWidth = 1024; expectedHeight = 683; }
+            else if (aspectRatio === '2:3') { expectedWidth = 683; expectedHeight = 1024; }
+            else if (aspectRatio === '5:4') { expectedWidth = 1024; expectedHeight = 819; }
+            else if (aspectRatio === '4:5') { expectedWidth = 819; expectedHeight = 1024; }
+          }
+          
+          const ratio = expectedHeight / expectedWidth;
+          const totalHeight = calculateNodeHeight(ratio, currentWidth, true);
+          const startHeight = nodeElement.offsetHeight;
+
+          // Only animate if there's a meaningful change
+          if (Math.abs(startHeight - totalHeight) > 5) {
+            animate(startHeight, totalHeight, {
+              duration: 0.8,
+              ease: [0.4, 0, 0.2, 1],
+              onUpdate: (latest) => {
+                setNodes((nds) => nds.map((node) => 
+                  node.id === id ? { ...node, style: { ...node.style, height: latest } } : node
+                ));
+              }
+            });
+          }
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [data.isLoading, hasContent, id, data.config?.aspectRatio, setNodes, showMetadata]);
+
+  // 3. Scanline Reveal State & Orchestration
+  const [isRevealing, setIsRevealing] = useState(false);
+  const [isLayoutReady, setIsLayoutReady] = useState(false);
+  const [pendingOutput, setPendingOutput] = useState<string | null>(null);
+  const [targetImageHeight, setTargetImageHeight] = useState<number | null>(null);
+  const lastImageRef = useRef<string | null>(null);
+  const revealProgress = useMotionValue(0);
+  const revealPercent = useTransform(revealProgress, [0, 1], ["0%", "100%"]);
+  
+  const maskImageValue = useTransform(revealProgress, (p) => {
+    if (!isRevealing) return 'none';
+    const pos = p * 100;
+    if (p === 0) return 'linear-gradient(to bottom, transparent, transparent)';
+    return `linear-gradient(to bottom, black 0%, black calc(${pos}% - 40px), transparent ${pos}%)`;
+  });
+
+  // Orchestrator Effect: Wait for layout + data + loading
+  useEffect(() => {
+    if (pendingOutput && isLayoutReady && !data.isLoading) {
+      // Add the requested random delay (500ms - 1000ms)
+      const randomDelay = 500 + Math.random() * 500;
+      
+      const timer = setTimeout(() => {
+        setIsRevealing(true);
+        lastImageRef.current = pendingOutput;
+        setPendingOutput(null);
+        
+        revealProgress.set(0);
+        animate(revealProgress, 1, {
+          duration: 1.5,
+          ease: "linear",
+          onComplete: () => {
+            setIsRevealing(false);
+          }
+        });
+      }, randomDelay);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [pendingOutput, isLayoutReady, data.isLoading, revealProgress]);
+
+  useEffect(() => {
+    const currentImg = data.outputs?.image;
+    if (currentImg && currentImg !== lastImageRef.current && !data.isLoading) {
+      setPendingOutput(currentImg);
+    }
+  }, [data.outputs?.image, data.isLoading]);
+
+  // Computed Metadata Logic (Scheme A - Self-healing & Stopwatch Support)
+  const computedMetadata = useMemo(() => {
+    // Start with the raw metadata from the store (contains our startTime "stopwatch")
+    const baseMetadata = { ...(data.metadata || {}) };
+    
+    // 1. Fallback for Model Name: Always look up in providers if missing in metadata
+    if (!baseMetadata.modelName) {
+      const modelKey = data.config?.model || (globalDefaults?.['image'] as string) || '';
+      if (modelKey) {
+        const [pId, mId] = modelKey.split(':');
+        const p = providers.find(prov => prov.id === pId);
+        const m = p?.models.find(mod => mod.id === mId);
+        if (m) baseMetadata.modelName = m.name;
+      }
+    }
+
+    if (data.isLoading) {
+      // 2. Fallback for Resolution: Calculate based on aspectRatio if missing (only during loading)
+      if (!baseMetadata.resolution) {
+        let w = 1024, h = 1024;
+        const ar = currentRatio;
+        if (ar === '16:9') { w = 1024; h = 576; }
+        else if (ar === '9:16') { w = 576; h = 1024; }
+        else if (ar === '4:3') { w = 1024; h = 768; }
+        else if (ar === '3:4') { w = 768; h = 1024; }
+        else if (ar === '21:9') { w = 1024; h = 438; }
+        else if (ar === '3:2') { w = 1024; h = 683; }
+        else if (ar === '2:3') { w = 683; h = 1024; }
+        else if (ar === '5:4') { w = 1024; h = 819; }
+        else if (ar === '4:5') { w = 819; h = 1024; }
+        baseMetadata.resolution = `${w} x ${h}`;
+      }
+    }
+    
+    return baseMetadata;
+  }, [data.metadata, data.isLoading, data.config, providers, globalDefaults]);
 
   const handleImageMouseDown = (e: React.MouseEvent) => {
     // Only handle left click
@@ -339,7 +496,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
   const handleRun = async () => {
     const activeOutputMode = data.activeOutputMode || 'image';
-    const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
+    const modelKey = data.config?.model || (globalDefaults?.[activeOutputMode as keyof typeof globalDefaults] as string) || '';
     
     let currentModel = null;
     if (modelKey) {
@@ -347,6 +504,14 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       const p = providers.find(p => p.id === pId);
       const m = p?.models.find(m => m.id === mId);
       if (p && m && p.enabled && m.enabled) currentModel = { provider: p, model: m };
+    }
+
+    // Fallback for demo mode if no model is selected or provider is disabled
+    if (!currentModel && isDemoMode) {
+      currentModel = {
+        provider: { id: 'demo', name: 'Demo Provider', type: 'mock', enabled: true, models: [], defaultProtocol: 'json', apiKey: '' } as any,
+        model: { id: 'demo-image-model', name: 'Demo Image Model', enabled: true, capabilities: { image: true } }
+      };
     }
 
     if (!currentModel) {
@@ -358,10 +523,49 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     
     // Capture fixed metadata at the start
     const modelName = currentModel.model.name;
-    const initialResolution = data.config?.aspectRatio && data.config?.imageSize 
-      ? `${data.config.aspectRatio} • ${data.config.imageSize}`
-      : '1:1 • 1K';
     
+    // Calculate expected resolution based on config
+    let expectedWidth = 1024;
+    let expectedHeight = 1024;
+    const aspectRatio = currentRatio;
+    
+    if (aspectRatio === '16:9') { expectedWidth = 1024; expectedHeight = 576; }
+    else if (aspectRatio === '9:16') { expectedWidth = 576; expectedHeight = 1024; }
+    else if (aspectRatio === '4:3') { expectedWidth = 1024; expectedHeight = 768; }
+    else if (aspectRatio === '3:4') { expectedWidth = 768; expectedHeight = 1024; }
+    else if (aspectRatio === '21:9') { expectedWidth = 1024; expectedHeight = 438; }
+    else if (aspectRatio === '3:2') { expectedWidth = 1024; expectedHeight = 683; }
+    else if (aspectRatio === '2:3') { expectedWidth = 683; expectedHeight = 1024; }
+    else if (aspectRatio === '5:4') { expectedWidth = 1024; expectedHeight = 819; }
+    else if (aspectRatio === '4:5') { expectedWidth = 819; expectedHeight = 1024; }
+    
+    const initialResolution = `${expectedWidth} x ${expectedHeight}`;
+    
+    // PREDICTIVE LAYOUT: Calculate and lock heights immediately
+    setIsLayoutReady(false);
+    const ratio = expectedHeight / expectedWidth;
+    const nodeElement = document.querySelector(`[data-id="${id}"]`) as HTMLElement;
+    
+    if (nodeElement) {
+      const currentWidth = nodeElement.offsetWidth || 320;
+      
+      // 1. Calculate and lock the image container height to prevent flex jitter
+      const innerWidth = currentWidth - 24 - 2 - 2;
+      const imgHeight = Math.ceil(innerWidth * ratio);
+      setTargetImageHeight(imgHeight);
+
+      // 2. Calculate and set the total node height
+      const targetTotalHeight = calculateNodeHeight(ratio, currentWidth, true);
+      
+      setNodes(nds => nds.map(n => n.id === id ? {
+        ...n,
+        style: { ...n.style, height: targetTotalHeight }
+      } : n));
+
+      // Layout animation takes ~500ms
+      setTimeout(() => setIsLayoutReady(true), 600);
+    }
+
     updateNodeData(id, { 
       isLoading: true,
       metadata: {
@@ -381,7 +585,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         modelId: currentModel.model.id,
         provider: currentModel.provider,
         isDemoMode,
-        aspectRatio: data.config?.aspectRatio,
+        aspectRatio: currentRatio,
+        imageSize: currentSize,
         thinkingLevel: data.config?.thinkingLevel === 'off' ? undefined : data.config?.thinkingLevel,
         thoughtSignature: data.thoughtSignature
       });
@@ -389,10 +594,11 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       const duration = response.metadata?.duration || (Date.now() - runStartTime) / 1000;
 
       if (response.error) {
-        alert(`Error: ${response.error}`);
+        console.error('Generation error:', response.error);
         updateNodeData(id, { 
           isLoading: false,
           metadata: {
+            ...data.metadata,
             startTime: undefined
           }
         });
@@ -435,8 +641,9 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         outputVersions: newVersions,
         thoughtSignature: response.thoughtSignature,
         metadata: {
+          ...data.metadata, // CRITICAL: Preserve the startTime stopwatch!
           modelName: response.metadata?.modelName || modelName,
-          resolution: response.metadata?.resolution || initialResolution,
+          resolution: response.metadata?.resolution || initialResolution
         }
       });
     } catch (err: any) {
@@ -533,7 +740,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       </div>
 
       {/* Content: Image Display */}
-      <div className="p-3 flex-1 min-h-0 flex flex-col gap-3">
+      <div className="p-3 flex-1 min-h-0 flex flex-col gap-3 pb-6">
         <div 
           ref={imageContainerRef}
           onMouseDownCapture={handleImageMouseDown}
@@ -550,13 +757,18 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           onDragLeave={onLocalDragLeave}
           onDrop={onLocalDrop}
           className={cn(
-            "relative flex-1 rounded-xl overflow-hidden border group transition-all duration-300",
+            "relative w-full rounded-xl border group transition-all duration-500 ease-in-out",
             hasContent 
               ? "bg-black border-[var(--app-border)]" 
               : "bg-white/[0.03] border-dashed border-white/10 hover:border-white/20 hover:bg-white/[0.05]",
             isCtrlPressed && hasContent && "cursor-crosshair",
             isDraggingOver && "border-[var(--brand-red)] bg-[var(--brand-red)]/10 ring-2 ring-[var(--brand-red)]/20"
           )}
+          style={{ 
+            height: targetImageHeight || 'auto',
+            aspectRatio: !targetImageHeight ? currentRatio.replace(':', '/') : undefined,
+            minHeight: !targetImageHeight ? 200 : undefined
+          }}
         >
           {isDraggingOver && (
             <div className="absolute inset-0 z-[110] bg-[var(--brand-red)]/5 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 border-2 border-[var(--brand-red)]/40 rounded-xl">
@@ -594,19 +806,51 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           )}
 
           {hasContent ? (
-            <img 
-              src={currentOutput || uploadedImages[0]?.url} 
-              className={cn(
-                "w-full h-full object-cover transition-opacity duration-500",
-                data.isLoading && "opacity-20"
-              )} 
-              alt="Display" 
-              referrerPolicy="no-referrer"
-              onLoad={handleImageLoad}
-            />
+            <div className="relative w-full h-full overflow-hidden rounded-xl">
+              {/* 
+                Flash Prevention Logic:
+                In Demo mode, the image might load faster than the state updates.
+                We hide the image (opacity 0) if it's a new image that hasn't started revealing yet.
+              */}
+              <motion.img 
+                key={currentOutput || (uploadedImages.length > 0 ? uploadedImages[0].url : 'empty')}
+                initial={{ opacity: 0 }}
+                animate={{ 
+                  opacity: (data.isLoading || (currentOutput && currentOutput !== lastImageRef.current && !isRevealing)) ? 0 : 1,
+                  filter: isRevealing ? 'brightness(1.2)' : 'brightness(1)'
+                }}
+                style={{
+                  WebkitMaskImage: maskImageValue,
+                  maskImage: maskImageValue,
+                }}
+                transition={{ 
+                  opacity: { duration: 0.5 },
+                  filter: { duration: 0.3 }
+                }}
+                src={currentOutput || uploadedImages[0]?.url} 
+                className="w-full h-full object-cover" 
+                alt="Display" 
+                referrerPolicy="no-referrer"
+                onLoad={handleImageLoad}
+              />
+              
+              {/* Scanline Effect - Energy Print */}
+              <AnimatePresence>
+                {isRevealing && (
+                  <motion.div 
+                    style={{ top: revealPercent }}
+                    exit={{ opacity: 0 }}
+                    className="absolute left-0 w-full h-[2px] bg-[#ef4444] shadow-[0_0_20px_#ef4444,0_0_40px_rgba(239,68,68,0.6)] z-20 pointer-events-none"
+                  >
+                    {/* Fusion Glow Overlay */}
+                    <div className="absolute bottom-0 left-0 w-full h-[40px] bg-gradient-to-t from-[#ef4444]/20 to-transparent pointer-events-none" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <ImageIcon size={48} className="text-white/5 group-hover:text-white/10 transition-colors" />
+              <ImageIcon size={48} className="text-white/[0.03] group-hover:text-white/[0.06] transition-colors" />
             </div>
           )}
 
@@ -692,7 +936,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           ))}
 
           {data.isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[2px]">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[2px] z-30">
               <div className="flex flex-col items-center gap-3">
                 <div className="relative">
                   <Loader2 size={32} className="text-[var(--brand-red)] animate-spin" />
@@ -711,7 +955,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
                 removeUploadedImage(id, uploadedImages[0].id);
                 updateNodeData(id, { isLocked: false });
               }}
-              className="absolute top-2 left-2 p-1.5 bg-red-500/80 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-10"
+              className="absolute top-2 left-2 p-1.5 bg-red-500/80 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 z-40"
               title="Remove image"
             >
               <Trash2 size={12} />
@@ -722,115 +966,146 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           {history.length === 0 && (
             <button 
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-              className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 z-10"
+              className="absolute top-2 right-2 p-1.5 bg-black/60 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 z-40"
             >
               <ArrowUp size={12} />
             </button>
           )}
         </div>
 
-        {/* History Thumbnails - Card Stack Interaction */}
-        {history.length > 0 && (
-          <motion.div 
-            className="relative h-[50px] flex items-center bg-white/[0.001]"
-            initial={false}
-            animate={{ 
-              width: isHistoryExpanded 
-                ? `${(history.length - 1) * 48 + 60}px` 
-                : `${Math.min(history.length - 1, 2) * 4 + 40}px` 
-            }}
-            transition={{
-              type: 'spring',
-              stiffness: 1000,
-              damping: 55,
-              mass: 0.2
-            }}
-            onMouseEnter={() => {
-              if (historyTimeoutRef.current) {
-                clearTimeout(historyTimeoutRef.current);
-                historyTimeoutRef.current = null;
-              }
-              setIsHistoryExpanded(true);
-            }}
-            onMouseLeave={() => {
-              historyTimeoutRef.current = setTimeout(() => {
-                setIsHistoryExpanded(false);
-                setPreviewImageUrl(null);
-              }, 300); // 300ms delay before shrinking
-            }}
-          >
-            <AnimatePresence mode="popLayout">
-              {history.map((item, index) => {
-                const isMain = index === 0;
-                const isSelected = selectedHistoryId === item.id;
-                
-                return (
-                  <motion.div 
-                    key={item.id}
-                    layoutId={item.id}
-                    initial={false}
-                    animate={{
-                      x: isHistoryExpanded ? index * 48 : index * 4,
-                      zIndex: history.length - index,
-                      scale: isHistoryExpanded ? 1 : 1 - index * 0.05,
-                      opacity: isHistoryExpanded ? 1 : (index < 3 ? 1 : 0),
-                    }}
-                    transition={{
-                      type: 'spring',
-                      stiffness: 1000,
-                      damping: 55,
-                      mass: 0.2,
-                      restDelta: 0.01
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      selectHistoryItem(id, item.id);
-                      setPreviewImageUrl(null);
-                    }}
-                    onMouseEnter={() => {
-                      if (index > 0) setPreviewImageUrl(item.url);
-                    }}
-                    className={cn(
-                      "absolute left-0 min-w-[40px] h-[40px] rounded-lg border overflow-hidden cursor-pointer transition-all group/thumb",
-                      isSelected 
-                        ? "border-[var(--brand-red)] ring-1 ring-[var(--brand-red)]" 
-                        : "border-white/10 hover:border-white/30",
-                      !isHistoryExpanded && !isMain && "pointer-events-none"
-                    )}
-                  >
-                    <img src={item.url} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+        {/* History Thumbnails - Animated "Graceful Growth" */}
+        <AnimatePresence>
+          {history.length > 0 && (
+            <motion.div
+              initial={{ height: 0, opacity: 0, marginTop: 0 }}
+              animate={{ height: 50, opacity: 1, marginTop: 0 }}
+              exit={{ height: 0, opacity: 0, marginTop: 0 }}
+              className="overflow-hidden"
+            >
+              <motion.div 
+                className="relative h-[50px] flex items-center bg-white/[0.001]"
+                initial={false}
+                animate={{ 
+                  width: isHistoryExpanded 
+                    ? `${(history.length - 1) * 48 + 60}px` 
+                    : `${Math.min(history.length - 1, 2) * 4 + 40}px` 
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 1000,
+                  damping: 55,
+                  mass: 0.2
+                }}
+                onMouseEnter={() => {
+                  if (historyTimeoutRef.current) {
+                    clearTimeout(historyTimeoutRef.current);
+                    historyTimeoutRef.current = null;
+                  }
+                  setIsHistoryExpanded(true);
+                }}
+                onMouseLeave={() => {
+                  historyTimeoutRef.current = setTimeout(() => {
+                    setIsHistoryExpanded(false);
+                    setPreviewImageUrl(null);
+                  }, 300); // 300ms delay before shrinking
+                }}
+              >
+                <AnimatePresence mode="popLayout">
+                  {data.isLoading && history.length === 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="absolute left-0 min-w-[40px] h-[40px] rounded-lg border border-white/10 bg-white/5 flex items-center justify-center"
+                    >
+                      <div className="w-4 h-4 rounded-full border-2 border-white/20 border-t-white/60 animate-spin" />
+                    </motion.div>
+                  )}
+                  {history.map((item, index) => {
+                    const isMain = index === 0;
+                    const isSelected = selectedHistoryId === item.id;
                     
-                    {/* Overlay actions */}
-                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
-                      <button 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          removeHistoryItem(id, item.id); 
-                          if (previewImageUrl === item.url) setPreviewImageUrl(null);
+                    return (
+                      <motion.div 
+                        key={item.id}
+                        layoutId={item.id}
+                        initial={false}
+                        animate={{
+                          x: isHistoryExpanded ? index * 48 : index * 4,
+                          zIndex: history.length - index,
+                          scale: isHistoryExpanded ? 1 : 1 - index * 0.05,
+                          opacity: isHistoryExpanded ? 1 : (index < 3 ? 1 : 0),
                         }}
-                        className="absolute top-0 right-0 p-1 rounded-bl-md bg-red-500 text-white hover:bg-red-600 shadow-sm transition-colors"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 1000,
+                          damping: 55,
+                          mass: 0.2,
+                          restDelta: 0.01
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectHistoryItem(id, item.id);
+                          setPreviewImageUrl(null);
+                        }}
+                        onMouseEnter={() => {
+                          if (index > 0) setPreviewImageUrl(item.url);
+                        }}
+                        className={cn(
+                          "absolute left-0 min-w-[40px] h-[40px] rounded-lg border overflow-hidden cursor-pointer transition-all group/thumb",
+                          isSelected 
+                            ? "border-[var(--brand-red)] ring-1 ring-[var(--brand-red)]" 
+                            : "border-white/10 hover:border-white/30",
+                          !isHistoryExpanded && !isMain && "pointer-events-none"
+                        )}
                       >
-                        <X size={8} strokeWidth={3} />
-                      </button>
-                    </div>
+                        <img src={item.url} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        
+                        {/* Overlay actions */}
+                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              removeHistoryItem(id, item.id); 
+                              if (previewImageUrl === item.url) setPreviewImageUrl(null);
+                            }}
+                            className="absolute top-0 right-0 p-1 rounded-bl-md bg-red-500 text-white hover:bg-red-600 shadow-sm transition-colors"
+                          >
+                            <X size={8} strokeWidth={3} />
+                          </button>
+                        </div>
 
-                    {/* Badge for stacked count */}
-                    {!isHistoryExpanded && isMain && history.length > 1 && (
-                      <div className="absolute bottom-0 right-0 bg-[var(--brand-red)] text-white text-[7px] font-bold px-1 rounded-tl-md">
-                        +{history.length - 1}
-                      </div>
-                    )}
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </motion.div>
-        )}
+                        {/* Badge for stacked count */}
+                        {!isHistoryExpanded && isMain && history.length > 1 && (
+                          <div className="absolute bottom-0 right-0 bg-[var(--brand-red)] text-white text-[7px] font-bold px-1 rounded-tl-md">
+                            +{history.length - 1}
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {/* Metadata Bar - Positioned at the outer bottom-right of the content area */}
-        <div className="flex justify-end mt-1 px-1">
-          <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} />
-        </div>
+        {/* Metadata Bar - Immediate display, following bottom edge */}
+        <AnimatePresence>
+          {(data.isLoading || hasContent) && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="mt-3"
+            >
+              <div className="flex justify-end px-1 pb-1">
+                <NodeMetadata metadata={computedMetadata} isLoading={data.isLoading} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
 
